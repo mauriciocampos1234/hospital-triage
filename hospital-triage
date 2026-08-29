@@ -1,0 +1,7 @@
+Snippet de código
+
+# URL do seu projeto Supabase
+VITE_SUPABASE_URL=https://hzwkdqfbkfwtrrqvjxeo.supabase.co
+
+# Chave de API pública (Anon Key)
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6d2tkcWZia2Z3dHJycXZqeGVvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4NDk5NjUsImV4cCI6MjEwMzQyNTk2NX0.0fTsiNOhO_SFOuVzxc7CDSNnF2o8yAqhhf3eIbj2ZL4
