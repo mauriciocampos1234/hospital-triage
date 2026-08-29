@@ -6,7 +6,9 @@ import { supabase } from '../config/supabase';
 export interface Profile {
     id: string;
     name: string;
-    role: 'gerente' | 'recepcionista' | 'medico';
+    email?: string;
+    role: 'gerente_geral' | 'gerente_plantao' | 'gerente' | 'recepcao' | 'recepcionista' | 'medico';
+    specialty?: string | null;
     specialty_id?: string | null;
     crm?: string | null;
 }
@@ -29,7 +31,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [profile, setProfile] = useState<Profile | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
 
-    // Função para buscar os dados de perfil (role, crm, etc) na tabela public.profiles
+    // Função para buscar os dados de perfil na tabela public.profiles
     const fetchProfile = async (userId: string) => {
         try {
             const { data, error } = await supabase
@@ -49,7 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
-    // Atualiza o perfil manualmente quando necessário (ex: após edições)
+    // Atualiza o perfil manualmente quando necessário
     const refreshProfile = async () => {
         if (user) {
             await fetchProfile(user.id);
@@ -57,7 +59,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     useEffect(() => {
-        // 1. Obtém a sessão atual salva no navegador (localStorage)
+        // 1. Obtém a sessão atual salva no navegador
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
             setUser(session?.user ?? null);
@@ -68,7 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         });
 
-        // 2. Escuta mudanças na autenticação em tempo real (login, logout, token expirado)
+        // 2. Escuta mudanças na autenticação em tempo real (login, logout)
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (_event, session) => {
                 setSession(session);
@@ -84,7 +86,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         );
 
-        // Cancela o listener ao desmontar o componente para evitar vazamento de memória
         return () => {
             subscription.unsubscribe();
         };
@@ -114,7 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 };
 
-// Hook personalizado para consumir o contexto com facilidade nas páginas
+// Hook personalizado para consumir o contexto
 // eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
     const context = useContext(AuthContext);
