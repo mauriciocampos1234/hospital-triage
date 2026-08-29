@@ -2,52 +2,74 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Stethoscope, LogOut, CheckCircle2, UserCheck, AlertCircle, Clock, Volume2 } from 'lucide-react';
+import { Stethoscope, LogOut, UserCheck, AlertCircle, Clock, Volume2, CheckCircle2 } from 'lucide-react';
 
-interface PatientQueue {
+interface TriagePatient {
     id: string;
-    patient_name: string;
-    age: number;
-    symptoms: string;
-    priority: 'verde' | 'amarelo' | 'vermelho';
-    status: 'aguardando' | 'em_atendimento' | 'concluido';
+    risk_level: string;
+    chief_complaint: string;
+    blood_pressure: string;
+    temperature: string;
+    heart_rate: string;
+    oxygen_saturation: string;
+    status: string;
     created_at: string;
-    doctor_notes?: string;
+    patients?: { name: string; cpf: string };
 }
+
+const MANCHESTER_ORDER: Record<string, number> = {
+    Vermelho: 1,
+    Laranja: 2,
+    Amarelo: 3,
+    Verde: 4,
+    Azul: 5,
+};
+
+const MANCHESTER_BADGES: Record<string, string> = {
+    Vermelho: 'bg-red-500 text-white',
+    Laranja: 'bg-orange-500 text-white',
+    Amarelo: 'bg-yellow-400 text-slate-900',
+    Verde: 'bg-emerald-500 text-white',
+    Azul: 'bg-blue-500 text-white',
+};
 
 export const DashboardMedico: React.FC = () => {
     const { profile, signOut } = useAuth();
     const navigate = useNavigate();
 
-    const [patients, setPatients] = useState<PatientQueue[]>([]);
-    const [currentPatient, setCurrentPatient] = useState<PatientQueue | null>(null);
+    const [triageQueue, setTriageQueue] = useState<TriagePatient[]>([]);
+    const [currentPatient, setCurrentPatient] = useState<TriagePatient | null>(null);
+    const [roomNumber, setRoomNumber] = useState('Consultório 01');
     const [loading, setLoading] = useState(true);
-    const [doctorNotes, setDoctorNotes] = useState('');
-    const [submitting, setSubmitting] = useState(false);
+    const [actionLoading, setActionLoading] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const fetchQueue = useCallback(async () => {
-        setLoading(true);
         try {
             const { data, error } = await supabase
-                .from('triage')
-                .select('*')
-                .in('status', ['aguardando', 'em_atendimento'])
-                .order('created_at', { ascending: true });
+                .from('triages')
+                .select('*, patients(name, cpf)')
+                .in('status', ['aguardando', 'em_atendimento']);
 
             if (error) throw error;
 
-            // Ordenação customizada por prioridade (vermelho > amarelo > verde)
-            const priorityOrder = { vermelho: 1, amarelo: 2, verde: 3 };
-            const sorted = (data || []).sort((a, b) => {
-                if (a.status === 'em_atendimento') return -1;
-                if (b.status === 'em_atendimento') return 1;
-                return priorityOrder[a.priority as keyof typeof priorityOrder] - priorityOrder[b.priority as keyof typeof priorityOrder];
+            const list = (data || []) as TriagePatient[];
+
+            list.sort((a, b) => {
+                const priorityA = MANCHESTER_ORDER[a.risk_level] || 99;
+                const priorityB = MANCHESTER_ORDER[b.risk_level] || 99;
+                if (priorityA !== priorityB) return priorityA - priorityB;
+                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
             });
 
-            setPatients(sorted);
+            const activeCall = list.find((item) => item.status === 'em_atendimento');
+            if (activeCall) {
+                setCurrentPatient(activeCall);
+            } else {
+                setCurrentPatient(null);
+            }
 
-            const inAttendance = sorted.find((p) => p.status === 'em_atendimento');
-            setCurrentPatient(inAttendance || null);
+            setTriageQueue(list.filter((item) => item.status === 'aguardando'));
         } catch (err) {
             console.error('Erro ao buscar fila médica:', err);
         } finally {
@@ -56,19 +78,25 @@ export const DashboardMedico: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        let isMounted = true;
+
         const loadData = async () => {
-            await fetchQueue();
+            if (isMounted) {
+                await fetchQueue();
+            }
         };
+
         loadData();
 
         const subscription = supabase
-            .channel('triage_medico')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'triage' }, () => {
+            .channel('triages_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'triages' }, () => {
                 fetchQueue();
             })
             .subscribe();
 
         return () => {
+            isMounted = false;
             supabase.removeChannel(subscription);
         };
     }, [fetchQueue]);
@@ -78,43 +106,54 @@ export const DashboardMedico: React.FC = () => {
         navigate('/');
     };
 
-    const handleCallPatient = async (patient: PatientQueue) => {
+    const handleCallPatient = async (patient: TriagePatient) => {
+        setActionLoading(true);
+        setErrorMessage(null);
+
         try {
             const { error } = await supabase
-                .from('triage')
-                .update({ status: 'em_atendimento' })
+                .from('triages')
+                .update({
+                    status: 'em_atendimento',
+                    doctor_id: profile?.id,
+                    updated_at: new Date().toISOString(),
+                })
                 .eq('id', patient.id);
 
             if (error) throw error;
-            fetchQueue();
-        } catch (err) {
-            console.error('Erro ao chamar paciente:', err);
+
+            setCurrentPatient({ ...patient, status: 'em_atendimento' });
+            await fetchQueue();
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Erro ao chamar paciente.';
+            setErrorMessage(msg);
+        } finally {
+            setActionLoading(false);
         }
     };
 
-    const handleFinishConsultation = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleFinishConsultation = async () => {
         if (!currentPatient) return;
+        setActionLoading(true);
 
-        setSubmitting(true);
         try {
             const { error } = await supabase
-                .from('triage')
+                .from('triages')
                 .update({
-                    status: 'concluido',
-                    doctor_notes: doctorNotes,
+                    status: 'finalizado',
+                    updated_at: new Date().toISOString(),
                 })
                 .eq('id', currentPatient.id);
 
             if (error) throw error;
 
-            setDoctorNotes('');
             setCurrentPatient(null);
-            fetchQueue();
-        } catch (err) {
-            console.error('Erro ao finalizar consulta:', err);
+            await fetchQueue();
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Erro ao finalizar atendimento.';
+            setErrorMessage(msg);
         } finally {
-            setSubmitting(false);
+            setActionLoading(false);
         }
     };
 
@@ -123,132 +162,145 @@ export const DashboardMedico: React.FC = () => {
             {/* Header */}
             <header className="bg-white border-b border-slate-200 shadow-sm px-6 py-4 flex justify-between items-center">
                 <div className="flex items-center gap-3">
-                    <div className="p-2 bg-teal-100 text-teal-600 rounded-lg">
+                    <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
                         <Stethoscope className="w-6 h-6" />
                     </div>
                     <div>
-                        <h1 className="text-xl font-bold text-slate-800">Consultório Médico</h1>
+                        <h1 className="text-xl font-bold text-slate-800">Painel do Médico</h1>
                         <p className="text-xs text-slate-500">
-                            Médico(a): <span className="font-medium text-slate-700">{profile?.name || 'Dr. Médico'}</span>
+                            Dr(a). <span className="font-semibold text-slate-700">{profile?.name || 'Médico(a)'}</span>
                         </p>
                     </div>
                 </div>
-                <button
-                    onClick={handleLogout}
-                    className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-700 rounded-lg font-medium transition"
-                >
-                    <LogOut className="w-4 h-4" />
-                    <span>Sair</span>
-                </button>
+
+                <div className="flex items-center gap-4">
+                    <select
+                        value={roomNumber}
+                        onChange={(e) => setRoomNumber(e.target.value)}
+                        className="bg-slate-50 border border-slate-300 text-xs font-semibold rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                        <option value="Consultório 01">Consultório 01</option>
+                        <option value="Consultório 02">Consultório 02</option>
+                        <option value="Consultório 03">Consultório 03</option>
+                        <option value="Consultório 04">Consultório 04</option>
+                    </select>
+
+                    <button
+                        onClick={handleLogout}
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-700 rounded-lg font-medium transition text-xs"
+                    >
+                        <LogOut className="w-4 h-4" />
+                        <span>Sair</span>
+                    </button>
+                </div>
             </header>
 
-            {/* Conteúdo Principal */}
-            <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+                {errorMessage && (
+                    <div className="p-4 bg-red-50 border-l-4 border-red-500 text-red-700 text-sm rounded flex items-center gap-2">
+                        <AlertCircle className="w-5 h-5" />
+                        <span>{errorMessage}</span>
+                    </div>
+                )}
 
-                {/* Painel de Atendimento Atual (2 Colunas) */}
-                <section className="lg:col-span-2 space-y-6">
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                        <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                            <UserCheck className="w-5 h-5 text-teal-600" />
-                            <span>Atendimento Em Andamento</span>
-                        </h2>
-
-                        {currentPatient ? (
-                            <form onSubmit={handleFinishConsultation} className="space-y-4">
-                                <div className="p-4 bg-teal-50 border border-teal-200 rounded-xl flex justify-between items-start">
-                                    <div>
-                                        <h3 className="text-xl font-bold text-teal-950">{currentPatient.patient_name}</h3>
-                                        <p className="text-sm text-teal-700">{currentPatient.age} anos</p>
-                                        <p className="text-sm mt-2 text-slate-700 font-medium">Sintomas relatados:</p>
-                                        <p className="text-sm text-slate-600 bg-white p-3 rounded-lg border border-teal-100 mt-1">
-                                            {currentPatient.symptoms}
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">
-                                        Prontuário / Prescrição / Observações Médicas
-                                    </label>
-                                    <textarea
-                                        rows={5}
-                                        required
-                                        value={doctorNotes}
-                                        onChange={(e) => setDoctorNotes(e.target.value)}
-                                        placeholder="Descreva o diagnóstico, medicação ministrada ou orientações de alta..."
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none resize-none"
-                                    />
-                                </div>
-
-                                <button
-                                    type="submit"
-                                    disabled={submitting}
-                                    className="w-full py-3 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-400 text-white font-semibold rounded-xl shadow transition flex items-center justify-center gap-2"
-                                >
-                                    <CheckCircle2 className="w-5 h-5" />
-                                    <span>{submitting ? 'Encerrando...' : 'Finalizar Atendimento'}</span>
-                                </button>
-                            </form>
-                        ) : (
-                            <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
-                                <Clock className="w-12 h-12 stroke-1" />
-                                <p className="text-base font-medium text-slate-600">Nenhum paciente em atendimento no momento.</p>
-                                <p className="text-xs">Selecione um paciente da fila ao lado para iniciar a consulta.</p>
+                {/* Atendimento Atual */}
+                {currentPatient && (
+                    <div className="bg-blue-600 text-white rounded-2xl p-6 shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-blue-200 text-xs font-semibold uppercase tracking-wider">
+                                <UserCheck className="w-4 h-4" /> Em Atendimento Agora em {roomNumber}
                             </div>
-                        )}
+                            <h2 className="text-2xl font-bold">{currentPatient.patients?.name || 'Paciente'}</h2>
+                            <p className="text-sm text-blue-100">Queixa: {currentPatient.chief_complaint || 'Não informada'}</p>
+                            <div className="flex gap-4 text-xs text-blue-200 pt-1">
+                                {currentPatient.blood_pressure && <span>PA: <strong>{currentPatient.blood_pressure}</strong></span>}
+                                {currentPatient.temperature && <span>Temp: <strong>{currentPatient.temperature}°C</strong></span>}
+                                {currentPatient.heart_rate && <span>FC: <strong>{currentPatient.heart_rate} bpm</strong></span>}
+                                {currentPatient.oxygen_saturation && <span>SpO2: <strong>{currentPatient.oxygen_saturation}%</strong></span>}
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => handleCallPatient(currentPatient)}
+                                disabled={actionLoading}
+                                className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-semibold px-4 py-2.5 rounded-xl transition text-sm"
+                            >
+                                <Volume2 className="w-4 h-4" /> Rechamar Painel
+                            </button>
+                            <button
+                                onClick={handleFinishConsultation}
+                                disabled={actionLoading}
+                                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold px-4 py-2.5 rounded-xl transition text-sm shadow"
+                            >
+                                <CheckCircle2 className="w-4 h-4" /> Concluir Consulta
+                            </button>
+                        </div>
                     </div>
-                </section>
+                )}
 
-                {/* Fila de Pacientes Aguardando (1 Coluna) */}
-                <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-                    <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <AlertCircle className="w-5 h-5 text-amber-500" />
-                        <span>Fila de Espera por Prioridade</span>
-                    </h2>
+                {/* Fila de Aguardando */}
+                <div className="space-y-4">
+                    <h3 className="text-lg font-bold text-slate-800">Próximos Pacientes na Fila</h3>
 
-                    <div className="flex-1 overflow-y-auto space-y-3">
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                         {loading ? (
-                            <p className="text-sm text-slate-500 text-center py-6">Carregando fila...</p>
-                        ) : patients.length === 0 ? (
-                            <p className="text-sm text-slate-400 text-center py-6">Sem pacientes na fila.</p>
+                            <div className="p-12 text-center text-slate-500">Buscando fila de espera...</div>
+                        ) : triageQueue.length === 0 ? (
+                            <div className="p-12 text-center text-slate-400">Nenhum paciente aguardando no momento.</div>
                         ) : (
-                            patients.map((pat) => (
-                                <div
-                                    key={pat.id}
-                                    className={`p-4 rounded-xl border transition flex justify-between items-center ${pat.status === 'em_atendimento'
-                                            ? 'bg-teal-50 border-teal-300'
-                                            : pat.priority === 'vermelho'
-                                                ? 'bg-red-50 border-red-200'
-                                                : pat.priority === 'amarelo'
-                                                    ? 'bg-amber-50 border-amber-200'
-                                                    : 'bg-slate-50 border-slate-200'
-                                        }`}
-                                >
-                                    <div className="space-y-1">
-                                        <p className="font-bold text-slate-800 text-sm">{pat.patient_name}</p>
-                                        <p className="text-xs text-slate-500">{pat.age} anos • {pat.priority.toUpperCase()}</p>
-                                    </div>
-
-                                    {pat.status === 'em_atendimento' ? (
-                                        <span className="text-xs font-semibold px-2.5 py-1 bg-teal-200 text-teal-800 rounded-full">
-                                            Em Atendimento
-                                        </span>
-                                    ) : (
-                                        <button
-                                            onClick={() => handleCallPatient(pat)}
-                                            disabled={!!currentPatient}
-                                            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 text-white rounded-lg text-xs font-semibold shadow transition flex items-center gap-1"
-                                        >
-                                            <Volume2 className="w-3.5 h-3.5" />
-                                            <span>Chamar</span>
-                                        </button>
-                                    )}
-                                </div>
-                            ))
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                                        <th className="py-3 px-6">Prioridade</th>
+                                        <th className="py-3 px-6">Paciente</th>
+                                        <th className="py-3 px-6">Queixa Principal</th>
+                                        <th className="py-3 px-6">Sinais Vitais</th>
+                                        <th className="py-3 px-6">Espera</th>
+                                        <th className="py-3 px-6 text-right">Ação</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
+                                    {triageQueue.map((item) => (
+                                        <tr key={item.id} className="hover:bg-slate-50/50 transition">
+                                            <td className="py-4 px-6">
+                                                <span className={`px-3 py-1 text-xs font-bold rounded-full ${MANCHESTER_BADGES[item.risk_level] || 'bg-slate-200'}`}>
+                                                    {item.risk_level}
+                                                </span>
+                                            </td>
+                                            <td className="py-4 px-6 font-medium text-slate-800">
+                                                {item.patients?.name || 'Sem nome'}
+                                                <div className="text-xs text-slate-400">CPF: {item.patients?.cpf || 'Não informado'}</div>
+                                            </td>
+                                            <td className="py-4 px-6 text-slate-600 max-w-xs truncate">
+                                                {item.chief_complaint || '-'}
+                                            </td>
+                                            <td className="py-4 px-6 text-xs text-slate-500 space-y-0.5">
+                                                {item.blood_pressure && <div>PA: <strong>{item.blood_pressure}</strong></div>}
+                                                {item.temperature && <div>Temp: <strong>{item.temperature}°C</strong></div>}
+                                            </td>
+                                            <td className="py-4 px-6 text-xs text-slate-400">
+                                                <div className="flex items-center gap-1">
+                                                    <Clock className="w-3.5 h-3.5" />
+                                                    {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </div>
+                                            </td>
+                                            <td className="py-4 px-6 text-right">
+                                                <button
+                                                    onClick={() => handleCallPatient(item)}
+                                                    disabled={actionLoading || !!currentPatient}
+                                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-semibold rounded-lg shadow transition"
+                                                >
+                                                    Chamar
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         )}
                     </div>
-                </section>
-
+                </div>
             </main>
         </div>
     );
