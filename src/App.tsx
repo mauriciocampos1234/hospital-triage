@@ -6,6 +6,7 @@ import { DashboardGerente } from "./pages/DashboardGerente";
 import { DashboardRecepcao } from "./pages/DashboardRecepcao";
 import { DashboardMedico } from "./pages/DashboardMedico";
 import { PainelTV } from "./pages/PainelTV";
+import { Triagem } from "./pages/Triagem";
 
 const NotFound = () => (
   <div className="p-10 text-2xl text-gray-600 font-bold">
@@ -18,9 +19,11 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* Rotas Públicas */}
           <Route path="/" element={<Login />} />
           <Route path="/painel" element={<PainelTV />} />
 
+          {/* Rotas Protegidas por Perfil */}
           <Route
             path="/gerencia"
             element={
@@ -40,6 +43,15 @@ export default function App() {
           />
 
           <Route
+            path="/triagem"
+            element={
+              <ProtectedRoute allowedRoles={["recepcionista", "gerente"]}>
+                <Triagem />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
             path="/medico"
             element={
               <ProtectedRoute allowedRoles={["medico"]}>
@@ -48,6 +60,7 @@ export default function App() {
             }
           />
 
+          {/* Rota Fallback */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
