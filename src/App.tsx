@@ -27,7 +27,7 @@ export default function App() {
           <Route
             path="/gerencia"
             element={
-              <ProtectedRoute allowedRoles={["gerente"]}>
+              <ProtectedRoute allowedRoles={["gerente_geral", "gerente_plantao", "gerente"]}>
                 <DashboardGerente />
               </ProtectedRoute>
             }
@@ -36,7 +36,7 @@ export default function App() {
           <Route
             path="/recepcao"
             element={
-              <ProtectedRoute allowedRoles={["recepcionista"]}>
+              <ProtectedRoute allowedRoles={["recepcao", "recepcionista", "gerente_plantao"]}>
                 <DashboardRecepcao />
               </ProtectedRoute>
             }
@@ -45,7 +45,7 @@ export default function App() {
           <Route
             path="/triagem"
             element={
-              <ProtectedRoute allowedRoles={["recepcionista", "gerente"]}>
+              <ProtectedRoute allowedRoles={["recepcao", "recepcionista", "gerente_plantao", "gerente_geral"]}>
                 <Triagem />
               </ProtectedRoute>
             }

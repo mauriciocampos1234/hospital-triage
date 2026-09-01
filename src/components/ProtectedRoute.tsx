@@ -2,9 +2,17 @@ import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
+export type UserRole = 
+    | 'gerente_geral' 
+    | 'gerente_plantao' 
+    | 'gerente' 
+    | 'recepcao' 
+    | 'recepcionista' 
+    | 'medico';
+
 interface ProtectedRouteProps {
     children: React.ReactNode;
-    allowedRoles?: ('gerente' | 'recepcionista' | 'medico')[];
+    allowedRoles?: UserRole[];
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
@@ -31,11 +39,16 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     }
 
     // 3. Se a rota exige papéis específicos e o perfil do usuário não corresponder
-    if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
-        // Redireciona o usuário para a área correta correspondente ao seu perfil real
-        if (profile.role === 'gerente') return <Navigate to="/gerencia" replace />;
-        if (profile.role === 'recepcionista') return <Navigate to="/recepcao" replace />;
-        if (profile.role === 'medico') return <Navigate to="/medico" replace />;
+    if (allowedRoles && profile && !allowedRoles.includes(profile.role as UserRole)) {
+        if (profile.role === 'gerente_geral' || profile.role === 'gerente_plantao' || profile.role === 'gerente') {
+            return <Navigate to="/gerencia" replace />;
+        }
+        if (profile.role === 'recepcao' || profile.role === 'recepcionista') {
+            return <Navigate to="/recepcao" replace />;
+        }
+        if (profile.role === 'medico') {
+            return <Navigate to="/medico" replace />;
+        }
         return <Navigate to="/" replace />;
     }
 

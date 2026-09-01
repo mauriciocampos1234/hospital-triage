@@ -1,430 +1,337 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import {
-    Activity,
-    UserPlus,
-    Clock,
-    LogOut,
-    AlertCircle,
-    HeartPulse,
-    Thermometer,
-    Gauge,
-    Droplets
+import { 
+    Stethoscope, 
+    Activity, 
+    Clock, 
+    LogOut, 
+    CheckCircle2, 
+    AlertTriangle,
+    User,
+    HeartPulse
 } from 'lucide-react';
 
-interface TriageItem {
+interface WaitingPatient {
     id: string;
-    risk_level: string;
-    chief_complaint: string;
-    blood_pressure: string;
-    temperature: string;
-    heart_rate: string;
-    oxygen_saturation: string;
-    status: string;
+    patient_id: string;
+    patient_name: string;
+    cpf: string;
     created_at: string;
-    patients?: { name: string; cpf: string };
 }
-
-const MANCHESTER_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-    Vermelho: { bg: 'bg-red-500', text: 'text-white', label: 'Emergência (0 min)' },
-    Laranja: { bg: 'bg-orange-500', text: 'text-white', label: 'Muito Urgente (10 min)' },
-    Amarelo: { bg: 'bg-yellow-400', text: 'text-slate-900', label: 'Urgente (60 min)' },
-    Verde: { bg: 'bg-emerald-500', text: 'text-white', label: 'Pouco Urgente (120 min)' },
-    Azul: { bg: 'bg-blue-500', text: 'text-white', label: 'Não Urgente (240 min)' },
-};
 
 export const Triagem: React.FC = () => {
     const { profile, signOut } = useAuth();
     const navigate = useNavigate();
 
-    const [triageList, setTriageList] = useState<TriageItem[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [modalOpen, setModalOpen] = useState(false);
-    const [submitting, setSubmitting] = useState(false);
+    const [queue, setQueue] = useState<WaitingPatient[]>([]);
+    const [selectedPatient, setSelectedPatient] = useState<WaitingPatient | null>(null);
+    const [saving, setSaving] = useState(false);
 
-    // Formulário do Paciente e Triagem
-    const [patientName, setPatientName] = useState('');
-    const [patientCpf, setPatientCpf] = useState('');
-    const [riskLevel, setRiskLevel] = useState('Verde');
-    const [chiefComplaint, setChiefComplaint] = useState('');
+    // Form Vinais & Triagem
     const [bloodPressure, setBloodPressure] = useState('');
-    const [temperature, setTemperature] = useState('');
-    const [heartRate, setHeartRate] = useState('');
-    const [oxygenSaturation, setOxygenSaturation] = useState('');
-    const [formError, setFormError] = useState<string | null>(null);
+    const [height, setHeight] = useState('');
+    const [weight, setWeight] = useState('');
+    const [symptoms, setSymptoms] = useState('');
+    const [riskLevel, setRiskLevel] = useState('verde');
 
-    const loadTriages = async () => {
-        setLoading(true);
+    const fetchTriageQueue = useCallback(async () => {
         try {
             const { data, error } = await supabase
                 .from('triages')
-                .select('*, patients(name, cpf)')
-                .order('created_at', { ascending: false });
+                .select('*')
+                .eq('status', 'aguardando_triagem')
+                .order('created_at', { ascending: true });
 
             if (error) throw error;
-            setTriageList(data || []);
+            setQueue(data || []);
         } catch (err) {
-            console.error('Erro ao buscar triagens:', err);
-        } finally {
-            setLoading(false);
+            console.error('Erro ao carregar fila de triagem:', err);
         }
-    };
+    }, []);
 
     useEffect(() => {
         let isMounted = true;
 
-        const fetchInitialData = async () => {
+        const initQueue = async () => {
             try {
-                const { data } = await supabase
+                const { data, error } = await supabase
                     .from('triages')
-                    .select('*, patients(name, cpf)')
-                    .order('created_at', { ascending: false });
+                    .select('*')
+                    .eq('status', 'aguardando_triagem')
+                    .order('created_at', { ascending: true });
 
+                if (error) throw error;
                 if (isMounted) {
-                    setTriageList(data || []);
-                    setLoading(false);
+                    setQueue(data || []);
                 }
             } catch (err) {
-                console.error('Erro ao buscar triagens:', err);
-                if (isMounted) setLoading(false);
+                console.error('Erro ao carregar fila de triagem:', err);
             }
         };
 
-        fetchInitialData();
+        initQueue();
+
+        // Escutar novos pacientes enviados pela Recepção em tempo real
+        const channel = supabase
+            .channel('realtime_triages_queue')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'triages' },
+                () => {
+                    fetchTriageQueue();
+                }
+            )
+            .subscribe();
 
         return () => {
             isMounted = false;
+            supabase.removeChannel(channel);
         };
-    }, []);
+    }, [fetchTriageQueue]);
+
+    const handleSelectPatient = (patient: WaitingPatient) => {
+        setSelectedPatient(patient);
+        setBloodPressure('');
+        setHeight('');
+        setWeight('');
+        setSymptoms('');
+        setRiskLevel('verde');
+    };
+
+    const handleSaveTriage = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedPatient) return;
+
+        setSaving(true);
+
+        try {
+            const { error } = await supabase
+                .from('triages')
+                .update({
+                    blood_pressure: bloodPressure || null,
+                    height: height || null,
+                    weight: weight || null,
+                    symptoms,
+                    risk_level: riskLevel,
+                    triage_staff_id: profile?.id,
+                    status: 'aguardando' // Liberado para o Médico e Painel TV
+                })
+                .eq('id', selectedPatient.id);
+
+            if (error) throw error;
+
+            alert(`Triagem de ${selectedPatient.patient_name} concluída! Paciente enviado para a fila médica.`);
+            setSelectedPatient(null);
+            await fetchTriageQueue();
+        } catch (err) {
+            const errorObj = err as Error;
+            console.error('Erro ao salvar triagem:', errorObj);
+            alert(`Falha ao registrar triagem: ${errorObj.message || 'Tente novamente.'}`);
+        } finally {
+            setSaving(false);
+        }
+    };
 
     const handleLogout = async () => {
         await signOut();
         navigate('/');
     };
 
-    const handleSaveTriage = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setSubmitting(true);
-        setFormError(null);
-
-        try {
-            let patientId = '';
-            const cleanCpf = patientCpf.trim();
-
-            if (cleanCpf) {
-                const { data: existingPatient } = await supabase
-                    .from('patients')
-                    .select('id')
-                    .eq('cpf', cleanCpf)
-                    .maybeSingle();
-
-                if (existingPatient) {
-                    patientId = existingPatient.id;
-                }
-            }
-
-            if (!patientId) {
-                const { data: newPatient, error: patientError } = await supabase
-                    .from('patients')
-                    .insert([{ name: patientName, cpf: cleanCpf || null }])
-                    .select()
-                    .single();
-
-                if (patientError) throw patientError;
-                patientId = newPatient.id;
-            }
-
-            const { error: triageError } = await supabase.from('triages').insert([
-                {
-                    patient_id: patientId,
-                    risk_level: riskLevel,
-                    chief_complaint: chiefComplaint,
-                    blood_pressure: bloodPressure,
-                    temperature: temperature,
-                    heart_rate: heartRate,
-                    oxygen_saturation: oxygenSaturation,
-                    status: 'aguardando',
-                },
-            ]);
-
-            if (triageError) throw triageError;
-
-            setPatientName('');
-            setPatientCpf('');
-            setChiefComplaint('');
-            setBloodPressure('');
-            setTemperature('');
-            setHeartRate('');
-            setOxygenSaturation('');
-            setRiskLevel('Verde');
-            setModalOpen(false);
-
-            await loadTriages();
-        } catch (err: unknown) {
-            console.error('Erro ao cadastrar triagem:', err);
-            const msg = err instanceof Error ? err.message : 'Erro ao registrar triagem.';
-            setFormError(msg);
-        } finally {
-            setSubmitting(false);
-        }
-    };
+    const riskBadges = [
+        { id: 'vermelho', label: 'Emergência (Vermelho)', bg: 'bg-red-600 text-white border-red-700' },
+        { id: 'laranja', label: 'Muito Urgente (Laranja)', bg: 'bg-orange-500 text-white border-orange-600' },
+        { id: 'amarelo', label: 'Urgente (Amarelo)', bg: 'bg-yellow-400 text-slate-900 border-yellow-500' },
+        { id: 'verde', label: 'Pouco Urgente (Verde)', bg: 'bg-emerald-500 text-white border-emerald-600' },
+        { id: 'azul', label: 'Não Urgente (Azul)', bg: 'bg-blue-500 text-white border-blue-600' },
+    ];
 
     return (
         <div className="min-h-screen bg-slate-100 flex flex-col">
             {/* Header */}
-            <header className="bg-white border-b border-slate-200 shadow-sm px-6 py-4 flex justify-between items-center">
+            <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm">
                 <div className="flex items-center gap-3">
-                    <div className="p-2 bg-teal-100 text-teal-600 rounded-lg">
-                        <Activity className="w-6 h-6" />
+                    <div className="p-2.5 bg-emerald-100 text-emerald-600 rounded-xl">
+                        <Stethoscope className="w-6 h-6" />
                     </div>
                     <div>
-                        <h1 className="text-xl font-bold text-slate-800">Triagem & Classificação de Risco</h1>
+                        <h1 className="text-xl font-bold text-slate-800">Triagem & Enfermagem</h1>
                         <p className="text-xs text-slate-500">
-                            Operador: <span className="font-semibold text-slate-700">{profile?.name || 'Enfermagem'}</span>
+                            Profissional: <span className="font-semibold text-slate-700">{profile?.name}</span>
                         </p>
                     </div>
                 </div>
+
                 <button
                     onClick={handleLogout}
-                    className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-700 rounded-lg font-medium transition"
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-700 rounded-lg font-medium transition text-xs"
                 >
                     <LogOut className="w-4 h-4" />
                     <span>Sair</span>
                 </button>
             </header>
 
-            {/* Conteúdo */}
-            <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-                <div className="flex justify-between items-center">
-                    <div>
-                        <h2 className="text-lg font-bold text-slate-800">Fila de Atendimento Geral</h2>
-                        <p className="text-xs text-slate-500">Pacientes triados aguardando consulta médica</p>
+            {/* Conteúdo Principal */}
+            <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                
+                {/* Fila de Pacientes na Espera da Triagem */}
+                <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+                    <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+                        <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-emerald-600" /> Aguardando Triagem ({queue.length})
+                        </h2>
                     </div>
 
-                    <button
-                        onClick={() => setModalOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-semibold shadow transition"
-                    >
-                        <UserPlus className="w-5 h-5" />
-                        <span>Nova Triagem</span>
-                    </button>
+                    <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
+                        {queue.length === 0 ? (
+                            <p className="text-xs text-slate-400 text-center py-10">
+                                Nenhum paciente aguardando triagem no momento.
+                            </p>
+                        ) : (
+                            queue.map((item) => {
+                                const isSelected = selectedPatient?.id === item.id;
+                                return (
+                                    <div
+                                        key={item.id}
+                                        onClick={() => handleSelectPatient(item)}
+                                        className={`p-4 rounded-xl border transition cursor-pointer flex justify-between items-center ${
+                                            isSelected 
+                                                ? 'bg-emerald-50 border-emerald-400 shadow-sm' 
+                                                : 'bg-slate-50 border-slate-200 hover:bg-slate-100/80'
+                                        }`}
+                                    >
+                                        <div className="space-y-1">
+                                            <p className="font-bold text-slate-800 text-xs">{item.patient_name}</p>
+                                            <p className="text-[11px] text-slate-500">CPF: {item.cpf}</p>
+                                        </div>
+                                        <span className="text-[10px] font-bold px-2.5 py-1 rounded-md bg-white border border-slate-200 text-slate-600">
+                                            Selecionar
+                                        </span>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
                 </div>
 
-                {/* Tabela de Triagens */}
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    {loading ? (
-                        <div className="p-12 text-center text-slate-500 font-medium">Carregando fila de triagem...</div>
-                    ) : triageList.length === 0 ? (
-                        <div className="p-12 text-center text-slate-400">Nenhum paciente na fila no momento.</div>
-                    ) : (
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                                    <th className="py-3 px-6">Classificação</th>
-                                    <th className="py-3 px-6">Paciente</th>
-                                    <th className="py-3 px-6">Sinais Vitais</th>
-                                    <th className="py-3 px-6">Queixa Principal</th>
-                                    <th className="py-3 px-6">Status</th>
-                                    <th className="py-3 px-6">Horário</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                                {triageList.map((item) => {
-                                    const manchester = MANCHESTER_COLORS[item.risk_level] || MANCHESTER_COLORS['Verde'];
-                                    return (
-                                        <tr key={item.id} className="hover:bg-slate-50/50 transition">
-                                            <td className="py-4 px-6">
-                                                <span className={`px-3 py-1 text-xs font-bold rounded-full ${manchester.bg} ${manchester.text} shadow-sm`}>
-                                                    {item.risk_level}
-                                                </span>
-                                            </td>
-                                            <td className="py-4 px-6 font-medium text-slate-800">
-                                                {item.patients?.name || 'Paciente sem nome'}
-                                                <div className="text-xs text-slate-400">CPF: {item.patients?.cpf || 'Não informado'}</div>
-                                            </td>
-                                            <td className="py-4 px-6 text-xs text-slate-600 space-y-0.5">
-                                                {item.blood_pressure && <div>PA: <strong>{item.blood_pressure}</strong></div>}
-                                                {item.temperature && <div>Temp: <strong>{item.temperature}°C</strong></div>}
-                                                {item.heart_rate && <div>FC: <strong>{item.heart_rate} bpm</strong></div>}
-                                                {item.oxygen_saturation && <div>SpO2: <strong>{item.oxygen_saturation}%</strong></div>}
-                                            </td>
-                                            <td className="py-4 px-6 text-slate-600 max-w-xs truncate">
-                                                {item.chief_complaint || '-'}
-                                            </td>
-                                            <td className="py-4 px-6">
-                                                <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${
-                                                    item.status === 'aguardando'
-                                                        ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                                        : item.status === 'em_atendimento'
-                                                        ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                                        : 'bg-slate-100 text-slate-600 border-slate-200'
-                                                }`}>
-                                                    {item.status === 'aguardando' ? 'Aguardando' : item.status === 'em_atendimento' ? 'Em Atendimento' : 'Finalizado'}
-                                                </span>
-                                            </td>
-                                            <td className="py-4 px-6 text-xs text-slate-400">
-                                                <div className="flex items-center gap-1">
-                                                    <Clock className="w-3.5 h-3.5" />
-                                                    {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
-            </main>
-
-            {/* Modal de Cadastro de Triagem */}
-            {modalOpen && (
-                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
-                        <div className="bg-teal-600 px-6 py-4 text-white flex justify-between items-center">
-                            <h3 className="font-bold text-lg">Nova Triagem de Paciente</h3>
-                            <button onClick={() => setModalOpen(false)} className="text-teal-100 hover:text-white font-bold text-xl">✕</button>
+                {/* Formulário de Classificação / Dados Vitais */}
+                <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                    {!selectedPatient ? (
+                        <div className="flex flex-col items-center justify-center py-20 text-center space-y-3 text-slate-400">
+                            <Activity className="w-12 h-12 text-slate-300" />
+                            <p className="text-xs font-medium">Selecione um paciente na fila ao lado para iniciar a triagem.</p>
                         </div>
-
-                        <form onSubmit={handleSaveTriage} className="p-6 space-y-4 max-h-[85vh] overflow-y-auto">
-                            {formError && (
-                                <div className="p-3 bg-red-50 border-l-4 border-red-500 rounded text-red-700 text-xs flex items-center gap-2">
-                                    <AlertCircle className="w-4 h-4 shrink-0" />
-                                    <span>{formError}</span>
-                                </div>
-                            )}
-
-                            {/* Dados Básicos */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    ) : (
+                        <form onSubmit={handleSaveTriage} className="space-y-6">
+                            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                                 <div>
-                                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Nome do Paciente</label>
-                                    <input
-                                        type="text"
-                                        required
-                                        value={patientName}
-                                        onChange={(e) => setPatientName(e.target.value)}
-                                        placeholder="Nome Completo"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
-                                    />
+                                    <span className="text-[10px] uppercase font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md">
+                                        Atendimento de Triagem
+                                    </span>
+                                    <h2 className="text-lg font-bold text-slate-800 mt-1">{selectedPatient.patient_name}</h2>
+                                    <p className="text-xs text-slate-400">CPF: {selectedPatient.cpf}</p>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">CPF (Opcional)</label>
-                                    <input
-                                        type="text"
-                                        value={patientCpf}
-                                        onChange={(e) => setPatientCpf(e.target.value)}
-                                        placeholder="000.000.000-00"
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
-                                    />
+                                <User className="w-8 h-8 text-slate-300" />
+                            </div>
+
+                            {/* Sinais Vitais */}
+                            <div className="space-y-3">
+                                <h3 className="text-xs font-bold uppercase text-slate-700 flex items-center gap-1.5">
+                                    <HeartPulse className="w-4 h-4 text-emerald-600" /> Sinais Vitais & Biometria
+                                </h3>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                                    <div>
+                                        <label className="block font-semibold text-slate-600 mb-1">Pressão Arterial (PA)</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Ex: 120/80 mmHg"
+                                            value={bloodPressure}
+                                            onChange={(e) => setBloodPressure(e.target.value)}
+                                            className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-600 mb-1">Altura</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Ex: 1.75 m"
+                                            value={height}
+                                            onChange={(e) => setHeight(e.target.value)}
+                                            className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-semibold text-slate-600 mb-1">Peso</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Ex: 70 kg"
+                                            value={weight}
+                                            onChange={(e) => setWeight(e.target.value)}
+                                            className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
-                            {/* Classificação de Manchester */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Classificação de Risco (Manchester)</label>
-                                <div className="grid grid-cols-1 gap-2">
-                                    {Object.entries(MANCHESTER_COLORS).map(([key, val]) => (
+                            {/* Sintomas Relatados */}
+                            <div className="space-y-2 text-xs">
+                                <label className="block font-bold uppercase text-slate-700">Queixas Principal / Sintomas *</label>
+                                <textarea
+                                    required
+                                    rows={3}
+                                    placeholder="Descreva as principais dores, sintomas e observações do paciente..."
+                                    value={symptoms}
+                                    onChange={(e) => setSymptoms(e.target.value)}
+                                    className="w-full border border-slate-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-emerald-500"
+                                />
+                            </div>
+
+                            {/* Classificação de Risco Protocolo Manchester */}
+                            <div className="space-y-3">
+                                <label className="block font-bold uppercase text-xs text-slate-700 flex items-center gap-1.5">
+                                    <AlertTriangle className="w-4 h-4 text-amber-500" /> Classificação de Risco (Manchester) *
+                                </label>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                    {riskBadges.map((badge) => (
                                         <button
-                                            key={key}
+                                            key={badge.id}
                                             type="button"
-                                            onClick={() => setRiskLevel(key)}
-                                            className={`flex items-center justify-between px-4 py-2.5 rounded-lg text-xs font-bold border transition ${
-                                                riskLevel === key
-                                                    ? `${val.bg} ${val.text} ring-2 ring-offset-1 ring-slate-400`
-                                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                                            }`}
+                                            onClick={() => setRiskLevel(badge.id)}
+                                            className={`p-3 rounded-xl border text-left font-bold transition flex items-center justify-between ${
+                                                badge.bg
+                                            } ${riskLevel === badge.id ? 'ring-2 ring-slate-900 shadow-md scale-[1.02]' : 'opacity-80 hover:opacity-100'}`}
                                         >
-                                            <span>{key}</span>
-                                            <span className="font-normal opacity-90">{val.label}</span>
+                                            <span>{badge.label}</span>
+                                            {riskLevel === badge.id && <CheckCircle2 className="w-4 h-4" />}
                                         </button>
                                     ))}
                                 </div>
                             </div>
 
-                            {/* Sinais Vitais */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-600 uppercase mb-2">Sinais Vitais</label>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div className="flex items-center border border-slate-300 rounded-lg px-2 py-1 focus-within:ring-2 focus-within:ring-teal-500">
-                                        <Gauge className="w-4 h-4 text-slate-400 mr-2" />
-                                        <input
-                                            type="text"
-                                            value={bloodPressure}
-                                            onChange={(e) => setBloodPressure(e.target.value)}
-                                            placeholder="PA (120/80)"
-                                            className="w-full text-sm outline-none"
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center border border-slate-300 rounded-lg px-2 py-1 focus-within:ring-2 focus-within:ring-teal-500">
-                                        <Thermometer className="w-4 h-4 text-slate-400 mr-2" />
-                                        <input
-                                            type="text"
-                                            value={temperature}
-                                            onChange={(e) => setTemperature(e.target.value)}
-                                            placeholder="Temp (°C)"
-                                            className="w-full text-sm outline-none"
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center border border-slate-300 rounded-lg px-2 py-1 focus-within:ring-2 focus-within:ring-teal-500">
-                                        <HeartPulse className="w-4 h-4 text-slate-400 mr-2" />
-                                        <input
-                                            type="text"
-                                            value={heartRate}
-                                            onChange={(e) => setHeartRate(e.target.value)}
-                                            placeholder="FC (bpm)"
-                                            className="w-full text-sm outline-none"
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center border border-slate-300 rounded-lg px-2 py-1 focus-within:ring-2 focus-within:ring-teal-500">
-                                        <Droplets className="w-4 h-4 text-slate-400 mr-2" />
-                                        <input
-                                            type="text"
-                                            value={oxygenSaturation}
-                                            onChange={(e) => setOxygenSaturation(e.target.value)}
-                                            placeholder="SpO2 (%)"
-                                            className="w-full text-sm outline-none"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Queixa Principal */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Queixa Principal / Sintomas</label>
-                                <textarea
-                                    rows={2}
-                                    value={chiefComplaint}
-                                    onChange={(e) => setChiefComplaint(e.target.value)}
-                                    placeholder="Descreva a queixa trazida pelo paciente..."
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
-                                />
-                            </div>
-
-                            <div className="pt-2 flex gap-3">
+                            {/* Ações */}
+                            <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
                                 <button
                                     type="button"
-                                    onClick={() => setModalOpen(false)}
-                                    className="flex-1 py-2 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-sm transition"
+                                    onClick={() => setSelectedPatient(null)}
+                                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={submitting}
-                                    className="flex-1 py-2 px-4 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-400 text-white font-semibold rounded-lg text-sm shadow transition"
+                                    disabled={saving}
+                                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow disabled:bg-emerald-300"
                                 >
-                                    {submitting ? 'Salvando...' : 'Confirmar Triagem'}
+                                    {saving ? 'Finalizando...' : 'Concluir Triagem & Enviar p/ Médico'}
                                 </button>
                             </div>
                         </form>
-                    </div>
+                    )}
                 </div>
-            )}
+            </main>
         </div>
     );
 };
