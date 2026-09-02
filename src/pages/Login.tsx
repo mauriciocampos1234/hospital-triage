@@ -1,19 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
-import { Activity, Lock, Mail, AlertCircle } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
+import { Activity, Lock, Mail, AlertCircle, Monitor } from 'lucide-react';
 
 export const Login: React.FC = () => {
-    const navigate = useNavigate();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [submitting, setSubmitting] = useState(false);
+
+    const navigate = useNavigate();
+    const { user, profile, loading } = useAuth();
+
+    // Redireciona automaticamente se o usuário já estiver logado
+    useEffect(() => {
+        if (!loading && user && profile) {
+            switch (profile.role) {
+                case 'gerente_geral':
+                case 'gerente_plantao':
+                case 'gerente':
+                    navigate('/gerencia', { replace: true });
+                    break;
+                case 'recepcao':
+                case 'recepcionista':
+                    navigate('/recepcao', { replace: true });
+                    break;
+                case 'medico':
+                    navigate('/medico', { replace: true });
+                    break;
+                default:
+                    break;
+            }
+        }
+    }, [user, profile, loading, navigate]);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true);
-        setErrorMessage(null);
+        setSubmitting(true);
+        setErrorMsg(null);
 
         try {
             const { data, error } = await supabase.auth.signInWithPassword({
@@ -21,130 +46,127 @@ export const Login: React.FC = () => {
                 password,
             });
 
-            if (error) throw error;
+            if (error) {
+                throw new Error(
+                    error.message === 'Invalid login credentials'
+                        ? 'E-mail ou senha incorretos.'
+                        : error.message
+                );
+            }
 
             if (data.user) {
-                // Tenta buscar o perfil na tabela profiles usando .maybeSingle() para evitar exceção de linha ausente
-                const { data: profile, error: profileError } = await supabase
+                // Busca o perfil para determinar a rota de destino imediata
+                const { data: profileData } = await supabase
                     .from('profiles')
                     .select('role')
                     .eq('id', data.user.id)
-                    .maybeSingle();
+                    .single();
 
-                if (profileError) {
-                    console.error('Erro ao buscar perfil:', profileError);
-                }
-
-                // Obtém a função a partir da tabela profiles ou do user_metadata do Auth
-                const rawRole = profile?.role || data.user.user_metadata?.role || '';
-
-                if (!rawRole) {
-                    throw new Error('Perfil de usuário não encontrado na tabela profiles nem nos metadados da conta.');
-                }
-
-                // Normaliza o texto do cargo (remove acentos, espaços, hífens e converte para minúsculas)
-                const roleNormalized = rawRole
-                    .toLowerCase()
-                    .normalize('NFD')
-                    .replace(/[\u0300-\u036f]/g, '')
-                    .replace(/[\s_-]+/g, '');
-
-                // Redireciona de forma flexível testando as variações do cargo
-                if (roleNormalized.includes('gerente') || roleNormalized.includes('admin')) {
-                    navigate('/gerencia');
-                } else if (roleNormalized.includes('recepc')) {
-                    navigate('/recepcao');
-                } else if (roleNormalized.includes('triagem') || roleNormalized.includes('enferm')) {
-                    navigate('/triagem');
-                } else if (roleNormalized.includes('medic')) {
-                    navigate('/medico');
-                } else {
-                    setErrorMessage(`O cargo "${rawRole}" não possui uma rota configurada no sistema.`);
+                if (profileData) {
+                    switch (profileData.role) {
+                        case 'gerente_geral':
+                        case 'gerente_plantao':
+                        case 'gerente':
+                            navigate('/gerencia', { replace: true });
+                            break;
+                        case 'recepcao':
+                        case 'recepcionista':
+                            navigate('/recepcao', { replace: true });
+                            break;
+                        case 'medico':
+                            navigate('/medico', { replace: true });
+                            break;
+                        default:
+                            navigate('/', { replace: true });
+                    }
                 }
             }
-        } catch (err: unknown) {
-            console.error('Erro de Autenticação:', err);
-            const message = err instanceof Error ? err.message : 'Erro ao realizar login.';
-            
-            if (message.includes('Email not confirmed')) {
-                setErrorMessage('O e-mail deste usuário ainda não foi confirmado. Acesse o painel do Supabase (Authentication > Email) e desative a opção "Confirm email".');
-            } else if (message.includes('Invalid login credentials')) {
-                setErrorMessage('E-mail ou senha incorretos (ou usuário ainda não cadastrado no Supabase Auth).');
-            } else {
-                setErrorMessage(message);
-            }
+        } catch (err) {
+            const errObj = err as Error;
+            setErrorMsg(errObj.message || 'Falha ao autenticar.');
         } finally {
-            setLoading(false);
+            setSubmitting(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-            <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+        <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4">
+            <div className="w-full max-w-md bg-slate-800 border border-slate-700/80 rounded-3xl p-8 shadow-2xl space-y-6">
+
                 {/* Header */}
-                <div className="bg-blue-600 p-8 text-center text-white">
-                    <div className="inline-flex p-3 bg-blue-500/30 rounded-2xl mb-4 backdrop-blur-sm">
-                        <Activity className="w-10 h-10 text-white" />
+                <div className="text-center space-y-2">
+                    <div className="inline-flex p-3 bg-indigo-600/20 border border-indigo-500/30 rounded-2xl text-indigo-400 mb-2">
+                        <Activity className="w-8 h-8 animate-pulse" />
                     </div>
-                    <h1 className="text-2xl font-bold tracking-tight">Hospital Triage</h1>
-                    <p className="text-blue-100 text-sm mt-1">Sistema de Triagem e Chamada Médica</p>
+                    <h1 className="text-2xl font-black text-white tracking-wide">SYSTEM TRIAGE</h1>
+                    <p className="text-xs text-slate-400">Acesse o portal do seu setor hospitalar</p>
                 </div>
 
-                {/* Formulário */}
-                <form onSubmit={handleLogin} className="p-8 space-y-6">
-                    {errorMessage && (
-                        <div className="p-4 bg-red-50 border-l-4 border-red-500 text-red-700 text-sm rounded-r flex items-center gap-3">
-                            <AlertCircle className="w-5 h-5 shrink-0" />
-                            <span>{errorMessage}</span>
-                        </div>
-                    )}
+                {/* Mensagem de Erro */}
+                {errorMsg && (
+                    <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-2xl text-xs font-semibold flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                        <span>{errorMsg}</span>
+                    </div>
+                )}
 
-                    <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                            E-mail de Acesso
+                {/* Formulário */}
+                <form onSubmit={handleLogin} className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-slate-300 mb-1.5">
+                            E-mail
                         </label>
                         <div className="relative">
-                            <Mail className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                            <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
                             <input
                                 type="email"
                                 required
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                                 placeholder="seu.email@hospital.com"
-                                className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl text-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                                className="w-full bg-slate-900/80 border border-slate-700 text-white placeholder-slate-500 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
                             />
                         </div>
                     </div>
 
-                    <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-slate-300 mb-1.5">
                             Senha
                         </label>
                         <div className="relative">
-                            <Lock className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                            <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
                             <input
                                 type="password"
                                 required
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 placeholder="••••••••"
-                                className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl text-slate-800 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                                className="w-full bg-slate-900/80 border border-slate-700 text-white placeholder-slate-500 rounded-xl pl-10 pr-4 py-2.5 text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
                             />
                         </div>
                     </div>
 
                     <button
                         type="submit"
-                        disabled={loading}
-                        className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold rounded-xl shadow-lg transition text-sm tracking-wide"
+                        disabled={submitting}
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs shadow-lg shadow-indigo-600/30 transition duration-200 disabled:bg-indigo-800"
                     >
-                        {loading ? 'Autenticando...' : 'Entrar no Sistema'}
+                        {submitting ? 'Acessando...' : 'Entrar no Sistema'}
                     </button>
                 </form>
 
-                <div className="px-8 pb-6 text-center">
-                    <p className="text-xs text-slate-400">Acesso restrito a funcionários autorizados.</p>
+                {/* Link do Painel TV */}
+                <div className="pt-4 border-t border-slate-700/60 text-center">
+                    <button
+                        type="button"
+                        onClick={() => navigate('/painel')}
+                        className="inline-flex items-center gap-2 text-xs text-indigo-400 hover:text-indigo-300 font-semibold transition"
+                    >
+                        <Monitor className="w-4 h-4" />
+                        <span>Abrir Painel TV de Senhas</span>
+                    </button>
                 </div>
+
             </div>
         </div>
     );

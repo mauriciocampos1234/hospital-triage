@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
-import { useAuth } from '../contexts/AuthContext';
-import { NovoColaboradorModal } from '../components/NovoColaboradorModal';
+import { useAuth } from '../hooks/useAuth';
+import { NovoColaboradorModal } from '../components/modals/NovoColaboradorModal';
 import { 
     Users, 
     Stethoscope, 
