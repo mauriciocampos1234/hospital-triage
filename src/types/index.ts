@@ -8,37 +8,31 @@ export type UserRole =
 
 export type RiskLevel = 'vermelho' | 'laranja' | 'amarelo' | 'verde' | 'azul';
 
-export type TriageStatus =
-    | 'aguardando_triagem'
-    | 'aguardando'
-    | 'em_atendimento'
-    | 'chamado'
-    | 'atendido'
-    | 'cancelado';
-
 export interface Profile {
     id: string;
     name: string;
     email: string;
     role: UserRole;
-    crm?: string | null;        // <-- Adicionado aqui
-    specialty?: string | null;  // <-- Adicionado para especialidades médicas
+    crm?: string | null;
+    specialty?: string | null;
     created_at?: string;
 }
 
-export interface Triage {
+export interface Patient {
     id: string;
-    patient_id?: string;
-    patient_name: string;
+    name: string;
     cpf: string;
-    blood_pressure?: string | null;
-    height?: string | null;
-    weight?: string | null;
+    birth_date: string;
+    ticket_number: string;
+    is_priority: boolean;
+    status: 'aguardando_triagem' | 'aguardando_atendimento_medico' | 'em_atendimento' | 'finalizado';
+    risk_level?: RiskLevel | null;
     symptoms?: string | null;
-    risk_level?: RiskLevel | string;
-    triage_staff_id?: string | null;
-    doctor_id?: string | null;
-    status: TriageStatus | string;
-    created_at: string;
-    updated_at?: string;
+    blood_pressure?: string | null;
+    heart_rate?: number | null;
+    temperature?: number | null;
+    oxygen_saturation?: number | null;
+    doctor_room?: string | null;
+    called_at?: string | null;
+    created_at?: string;
 }

@@ -1,191 +1,110 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../config/supabase';
-import { Volume2, Monitor, VolumeX } from 'lucide-react';
-
-interface TriagePatient {
-    id: string;
-    patient_name: string;
-    risk_level: string;
-    status: string;
-    created_at: string;
-}
+import { Patient } from '../types';
+import { Monitor, Volume2 } from 'lucide-react';
 
 export const PainelTV: React.FC = () => {
-    const [patients, setPatients] = useState<TriagePatient[]>([]);
-    const [lastCalled, setLastCalled] = useState<TriagePatient | null>(null);
-    const [audioEnabled, setAudioEnabled] = useState(false);
-    
-    // Evita repetir a chamada de voz para o mesmo paciente
-    const lastSpokenId = useRef<string | null>(null);
-
-    // Função de Síntese de Voz (Web Speech API)
-    const speakPatientName = (name: string) => {
-        if (!('speechSynthesis' in window)) return;
-
-        window.speechSynthesis.cancel(); // Cancela falas anteriores na fila
-
-        const text = `Atenção, paciente ${name}. Favor dirigir-se ao consultório.`;
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'pt-BR';
-        utterance.rate = 0.9; // Velocidade natural
-        utterance.pitch = 1.0;
-
-        window.speechSynthesis.speak(utterance);
-    };
-
-    const fetchPatients = useCallback(async () => {
-        const { data, error } = await supabase
-            .from('triages')
-            .select('*')
-            .in('status', ['aguardando', 'em_atendimento', 'chamado'])
-            .order('created_at', { ascending: true });
-
-        if (!error && data) {
-            setPatients(data as TriagePatient[]);
-            
-            const current = data.find(p => p.status === 'em_atendimento' || p.status === 'chamado');
-            if (current) {
-                setLastCalled(current);
-
-                // Executa voz se for uma nova chamada e o áudio estiver ativado pelo usuário
-                if (current.id !== lastSpokenId.current) {
-                    lastSpokenId.current = current.id;
-                    if (audioEnabled) {
-                        speakPatientName(current.patient_name);
-                    }
-                }
-            }
-        }
-    }, [audioEnabled]);
+    const [currentCall, setCurrentCall] = useState<Patient | null>(null);
+    const [recentCalls, setRecentCalls] = useState<Patient[]>([]);
 
     useEffect(() => {
-        let isMounted = true;
+        const fetchLastCalls = async () => {
+            try {
+                const { data } = await supabase
+                    .from('patients')
+                    .select('*')
+                    .not('called_at', 'is', null)
+                    .order('called_at', { ascending: false })
+                    .limit(5);
 
-        const initData = async () => {
-            const { data, error } = await supabase
-                .from('triages')
-                .select('*')
-                .in('status', ['aguardando', 'em_atendimento', 'chamado'])
-                .order('created_at', { ascending: true });
-
-            if (!error && data && isMounted) {
-                setPatients(data as TriagePatient[]);
-                const current = data.find(p => p.status === 'em_atendimento' || p.status === 'chamado');
-                if (current) {
-                    setLastCalled(current);
+                if (data && data.length > 0) {
+                    setCurrentCall(data[0]);
+                    setRecentCalls(data.slice(1));
                 }
+            } catch (err) {
+                console.error('Erro ao buscar chamadas:', err);
             }
         };
 
-        initData();
+        fetchLastCalls();
 
-        // Subscrição em tempo real na tabela de triagens
         const channel = supabase
-            .channel('realtime_triages_tv')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'triages' },
-                () => {
-                    fetchPatients();
+            .channel('public:patients:tv')
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'patients' }, (payload) => {
+                if (payload.new && payload.new.called_at) {
+                    fetchLastCalls();
+                    try {
+                        const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+                        const osc = ctx.createOscillator();
+                        osc.connect(ctx.destination);
+                        osc.frequency.setValueAtTime(440, ctx.currentTime);
+                        osc.start();
+                        osc.stop(ctx.currentTime + 0.3);
+                    } catch {
+                        // Ignora se o navegador bloquear som sem clique inicial
+                    }
                 }
-            )
+            })
             .subscribe();
 
         return () => {
-            isMounted = false;
             supabase.removeChannel(channel);
         };
-    }, [fetchPatients]);
-
-    // Permite ativar o áudio contornando o bloqueio de Autoplay dos navegadores
-    const toggleAudio = () => {
-        const newState = !audioEnabled;
-        setAudioEnabled(newState);
-        if (newState && lastCalled) {
-            speakPatientName(lastCalled.patient_name);
-        }
-    };
-
-    const getRiskBadgeColor = (risk: string) => {
-        switch (risk?.toLowerCase()) {
-            case 'vermelho': return 'bg-red-500 text-white';
-            case 'laranja': return 'bg-orange-500 text-white';
-            case 'amarelo': return 'bg-yellow-400 text-slate-900';
-            case 'verde': return 'bg-emerald-500 text-white';
-            default: return 'bg-blue-500 text-white';
-        }
-    };
+    }, []);
 
     return (
-        <div className="min-h-screen bg-slate-900 text-white p-8 flex flex-col justify-between">
-            {/* Header */}
-            <header className="flex justify-between items-center border-b border-slate-800 pb-6">
+        <div className="min-h-screen bg-slate-950 text-white p-8 flex flex-col justify-between">
+            <header className="flex justify-between items-center border-b border-slate-800 pb-4">
                 <div className="flex items-center gap-3">
-                    <Monitor className="w-10 h-10 text-indigo-400" />
-                    <div>
-                        <h1 className="text-3xl font-black tracking-wide">PAINEL DE CHAMADA</h1>
-                        <p className="text-sm text-slate-400">Acompanhamento em Tempo Real</p>
-                    </div>
+                    <Monitor className="w-8 h-8 text-indigo-500 animate-pulse" />
+                    <h1 className="text-2xl font-black tracking-wider">PAINEL DE CHAMADA</h1>
                 </div>
-                <div className="flex items-center gap-4">
-                    <button
-                        onClick={toggleAudio}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-xs transition border ${
-                            audioEnabled 
-                                ? 'bg-emerald-950/80 border-emerald-700 text-emerald-400 hover:bg-emerald-900' 
-                                : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
-                        }`}
-                    >
-                        {audioEnabled ? <Volume2 className="w-4 h-4 animate-pulse" /> : <VolumeX className="w-4 h-4" />}
-                        {audioEnabled ? 'Áudio Ativado' : 'Ativar Chamada de Voz'}
-                    </button>
-                    <span className="text-xs text-indigo-400 font-bold uppercase tracking-widest bg-indigo-950/80 border border-indigo-800 px-4 py-2 rounded-full flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" /> WebSocket Ativo
-                    </span>
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 bg-slate-900 px-3 py-1.5 rounded-full border border-slate-800">
+                    <Volume2 className="w-4 h-4 text-emerald-400" /> Sistema Ativo
                 </div>
             </header>
 
-            {/* Chamada Principal */}
-            <main className="my-8 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-                <div className="lg:col-span-7 bg-slate-800/90 border-2 border-indigo-500/40 rounded-3xl p-10 shadow-2xl flex flex-col items-center justify-center text-center space-y-6">
-                    <span className="text-xs font-bold uppercase tracking-widest text-slate-400 bg-slate-700/60 px-4 py-1.5 rounded-full flex items-center gap-2">
-                        <Volume2 className="w-4 h-4 text-indigo-400 animate-bounce" /> Chamada Atual
-                    </span>
-                    
-                    <h2 className="text-5xl font-extrabold text-indigo-300">
-                        {lastCalled ? lastCalled.patient_name : 'Aguardando Atendimento...'}
-                    </h2>
-
-                    {lastCalled && (
-                        <div className="pt-4 border-t border-slate-700/80 w-full flex justify-center gap-4">
-                            <span className={`text-sm font-bold px-5 py-2 rounded-xl ${getRiskBadgeColor(lastCalled.risk_level)}`}>
-                                Prioridade: {lastCalled.risk_level}
-                            </span>
+            <main className="my-auto py-8 grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
+                <div className="lg:col-span-2 bg-indigo-950/40 border-2 border-indigo-500/50 rounded-3xl p-10 text-center shadow-2xl shadow-indigo-500/10 space-y-4">
+                    <span className="text-sm font-bold tracking-widest text-indigo-400 uppercase">Senha Atual</span>
+                    <div className="text-8xl sm:text-9xl font-black text-white tracking-wider my-2">
+                        {currentCall ? currentCall.ticket_number : '---'}
+                    </div>
+                    <div className="text-3xl font-bold text-indigo-200">
+                        {currentCall ? currentCall.name : 'Aguardando Chamada...'}
+                    </div>
+                    {currentCall?.doctor_room && (
+                        <div className="pt-4 text-xl font-semibold text-slate-300 border-t border-indigo-900/50 inline-block px-8">
+                            Dirija-se ao: <span className="text-emerald-400 font-bold">{currentCall.doctor_room}</span>
                         </div>
                     )}
                 </div>
 
-                {/* Fila de Espera */}
-                <div className="lg:col-span-5 bg-slate-800/40 border border-slate-800 rounded-3xl p-6 flex flex-col">
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4 pb-2 border-b border-slate-700">
-                        Fila de Espera ({patients.length})
-                    </h3>
-                    <div className="space-y-3 overflow-y-auto flex-1 pr-1">
-                        {patients.length === 0 ? (
-                            <p className="text-xs text-slate-500 text-center py-8">Nenhum paciente aguardando.</p>
+                <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4">
+                    <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-2">
+                        Últimas Chamadas
+                    </h2>
+                    <div className="space-y-3">
+                        {recentCalls.length === 0 ? (
+                            <p className="text-xs text-slate-600">Nenhum histórico recente.</p>
                         ) : (
-                            patients.map((p) => (
-                                <div key={p.id} className="p-4 bg-slate-800/80 border border-slate-700 rounded-2xl flex justify-between items-center">
-                                    <span className="font-bold text-base text-slate-200">{p.patient_name}</span>
-                                    <span className={`text-xs font-bold px-3 py-1 rounded-lg ${getRiskBadgeColor(p.risk_level)}`}>
-                                        {p.risk_level}
-                                    </span>
+                            recentCalls.map((item) => (
+                                <div key={item.id} className="flex justify-between items-center bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                                    <div>
+                                        <p className="text-sm font-bold text-white">{item.name}</p>
+                                        <p className="text-[10px] text-slate-500">{item.doctor_room || 'Atendimento'}</p>
+                                    </div>
+                                    <span className="text-lg font-black text-indigo-400">{item.ticket_number}</span>
                                 </div>
                             ))
                         )}
                     </div>
                 </div>
             </main>
+
+            <footer className="text-center text-xs text-slate-600 border-t border-slate-900 pt-4">
+                Hospital Triage System • Atualização em Tempo Real
+            </footer>
         </div>
     );
 };
