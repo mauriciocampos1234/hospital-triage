@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../config/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { NovoColaboradorModal } from '../components/NovoColaboradorModal';
 import { 
     Users, 
     Stethoscope, 
@@ -19,7 +19,7 @@ interface StaffProfile {
     id: string;
     name: string;
     email: string;
-    role: 'medico' | 'recepcao' | 'triagem' | 'gerente' | string;
+    role: 'medico' | 'recepcao' | 'triagem' | 'gerente_dia' | 'gerente_geral' | string;
     room_number?: string;
     is_active: boolean;
     crm?: string;
@@ -33,12 +33,6 @@ interface SectorStats {
     waitingDoctor: number;
     completedToday: number;
 }
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const tempAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: { persistSession: false }
-});
 
 export const DashboardGerente: React.FC = () => {
     const { profile, signOut } = useAuth();
@@ -55,14 +49,6 @@ export const DashboardGerente: React.FC = () => {
     });
 
     const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
-    const [newStaffName, setNewStaffName] = useState('');
-    const [newStaffEmail, setNewStaffEmail] = useState('');
-    const [newStaffPassword, setNewStaffPassword] = useState('');
-    const [newStaffRole, setNewStaffRole] = useState<'medico' | 'recepcao' | 'triagem' | 'gerente'>('recepcao');
-    const [newStaffCrm, setNewStaffCrm] = useState('');
-    const [newStaffSpecialty, setNewStaffSpecialty] = useState('');
-    const [savingStaff, setSavingStaff] = useState(false);
-
     const [allocationRooms, setAllocationRooms] = useState<{ [key: string]: string }>({});
 
     const loadData = useCallback(async () => {
@@ -110,13 +96,30 @@ export const DashboardGerente: React.FC = () => {
     useEffect(() => {
         let isMounted = true;
         const init = async () => {
-            if (isMounted) {
-                await loadData();
-            }
+            if (isMounted) await loadData();
         };
         init();
         return () => { isMounted = false; };
     }, [loadData]);
+
+    const getRoleSubtitle = (staff: StaffProfile) => {
+        const role = (staff.role || '').toLowerCase().trim();
+        switch (role) {
+            case 'medico':
+                return staff.specialty ? `Médico - ${staff.specialty}` : 'Médico';
+            case 'triagem':
+                return staff.specialty || 'Enfermeiro(a) / Triagem';
+            case 'recepcao':
+                return 'Recepcionista';
+            case 'gerente_dia':
+                return 'Gerente do Dia';
+            case 'gerente_geral':
+            case 'gerente':
+                return 'Gerente Geral';
+            default:
+                return staff.specialty || 'Colaborador';
+        }
+    };
 
     const handleUpdateAllocation = async (staffId: string, roomNumber: string) => {
         try {
@@ -149,61 +152,6 @@ export const DashboardGerente: React.FC = () => {
         }
     };
 
-    const handleCreateStaff = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setSavingStaff(true);
-
-        try {
-            const { data: authData, error: authError } = await tempAuthClient.auth.signUp({
-                email: newStaffEmail,
-                password: newStaffPassword,
-            });
-
-            if (authError) {
-                if (authError.message.includes('already registered')) {
-                    throw new Error('Este e-mail já está registrado na autenticação. Se o cadastro anterior falhou, remova o usuário na aba Authentication > Users no Supabase.');
-                }
-                throw authError;
-            }
-
-            if (!authData.user) throw new Error('Não foi possível registrar o usuário.');
-
-            const profilePayload = {
-                id: authData.user.id,
-                name: newStaffName,
-                email: newStaffEmail,
-                role: newStaffRole,
-                is_active: true,
-                ...(newStaffRole === 'medico' && {
-                    crm: newStaffCrm,
-                    specialty: newStaffSpecialty || 'Clínico Geral'
-                })
-            };
-
-            const { error: profileError } = await supabase
-                .from('profiles')
-                .upsert([profilePayload]);
-
-            if (profileError) throw profileError;
-
-            alert(`Colaborador (${newStaffRole.toUpperCase()}) cadastrado com sucesso!`);
-            setIsStaffModalOpen(false);
-            setNewStaffName('');
-            setNewStaffEmail('');
-            setNewStaffPassword('');
-            setNewStaffCrm('');
-            setNewStaffSpecialty('');
-            setNewStaffRole('recepcao');
-            await loadData();
-        } catch (err) {
-            const errorObj = err as Error;
-            console.error('Erro ao cadastrar colaborador:', errorObj);
-            alert(`Falha ao cadastrar: ${errorObj.message}`);
-        } finally {
-            setSavingStaff(false);
-        }
-    };
-
     const handleLogout = async () => {
         await signOut();
         navigate('/');
@@ -222,14 +170,15 @@ export const DashboardGerente: React.FC = () => {
                 return <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded text-[10px] font-bold">RECEPÇÃO</span>;
             case 'triagem':
                 return <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">TRIAGEM</span>;
-            case 'gerente':
+            case 'gerente_dia':
+                return <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">GERENTE DO DIA</span>;
             case 'gerente_geral':
-            case 'gerente geral':
-                return <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded text-[10px] font-bold">GERENTE</span>;
+            case 'gerente':
+                return <span className="bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded text-[10px] font-bold">GERENTE GERAL</span>;
             default:
                 return (
                     <span className="bg-slate-100 text-slate-700 border border-slate-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">
-                        {role ? role : 'NÃO DEFINIDO'}
+                        {role || 'NÃO DEFINIDO'}
                     </span>
                 );
         }
@@ -304,6 +253,7 @@ export const DashboardGerente: React.FC = () => {
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {/* Recepção */}
                             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
                                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                                     <h2 className="text-xs font-bold text-slate-800 uppercase flex items-center gap-2">
@@ -317,7 +267,10 @@ export const DashboardGerente: React.FC = () => {
                                         receptionists.map(item => (
                                             <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
                                                 <div className="flex justify-between items-center">
-                                                    <span className="font-bold text-slate-800">{item.name}</span>
+                                                    <div>
+                                                        <span className="font-bold text-slate-800 block">{item.name}</span>
+                                                        <span className="text-[10px] text-slate-400 block font-medium">{getRoleSubtitle(item)}</span>
+                                                    </div>
                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
                                                         {item.is_active ? 'Ativo' : 'Inativo'}
                                                     </span>
@@ -343,6 +296,7 @@ export const DashboardGerente: React.FC = () => {
                                 </div>
                             </div>
 
+                            {/* Triagem */}
                             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
                                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                                     <h2 className="text-xs font-bold text-slate-800 uppercase flex items-center gap-2">
@@ -356,7 +310,10 @@ export const DashboardGerente: React.FC = () => {
                                         triageStaff.map(item => (
                                             <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
                                                 <div className="flex justify-between items-center">
-                                                    <span className="font-bold text-slate-800">{item.name}</span>
+                                                    <div>
+                                                        <span className="font-bold text-slate-800 block">{item.name}</span>
+                                                        <span className="text-[10px] text-slate-400 block font-medium">{getRoleSubtitle(item)}</span>
+                                                    </div>
                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
                                                         {item.is_active ? 'Ativo' : 'Inativo'}
                                                     </span>
@@ -382,6 +339,7 @@ export const DashboardGerente: React.FC = () => {
                                 </div>
                             </div>
 
+                            {/* Médicos */}
                             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
                                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                                     <h2 className="text-xs font-bold text-slate-800 uppercase flex items-center gap-2">
@@ -397,7 +355,7 @@ export const DashboardGerente: React.FC = () => {
                                                 <div className="flex justify-between items-center">
                                                     <div>
                                                         <span className="font-bold text-slate-800 block">{item.name}</span>
-                                                        <span className="text-[10px] text-slate-400">CRM: {item.crm || 'N/I'}</span>
+                                                        <span className="text-[10px] text-slate-400 block font-medium">{getRoleSubtitle(item)}</span>
                                                     </div>
                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
                                                         {item.is_active ? 'Ativo' : 'Inativo'}
@@ -464,7 +422,14 @@ export const DashboardGerente: React.FC = () => {
                                     ) : (
                                         staffList.map((staff) => (
                                             <tr key={staff.id} className="hover:bg-slate-50 transition">
-                                                <td className="p-4 font-bold text-slate-800">{staff.name}</td>
+                                                <td className="p-4">
+                                                    <span className="font-bold text-slate-800 block">
+                                                        {staff.name}
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-400 font-medium block">
+                                                        {getRoleSubtitle(staff)}
+                                                    </span>
+                                                </td>
                                                 <td className="p-4 text-slate-500">
                                                     <div>{staff.email || 'N/A'}</div>
                                                     {staff.crm && <div className="text-[10px] text-slate-400 font-semibold">CRM: {staff.crm}</div>}
@@ -519,112 +484,11 @@ export const DashboardGerente: React.FC = () => {
                 )}
             </main>
 
-            {isStaffModalOpen && (
-                <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-6 space-y-5">
-                        <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                            <h3 className="text-base font-bold text-slate-800">Cadastrar Colaborador</h3>
-                            <button onClick={() => setIsStaffModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
-                        </div>
-
-                        <form onSubmit={handleCreateStaff} className="space-y-4 text-xs">
-                            <div>
-                                <label className="block font-bold text-slate-700 uppercase mb-1">Nome Completo *</label>
-                                <input
-                                    type="text"
-                                    required
-                                    value={newStaffName}
-                                    onChange={(e) => setNewStaffName(e.target.value)}
-                                    placeholder="Ex: Dr. Roberto Silva"
-                                    className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block font-bold text-slate-700 uppercase mb-1">E-mail *</label>
-                                <input
-                                    type="email"
-                                    required
-                                    value={newStaffEmail}
-                                    onChange={(e) => setNewStaffEmail(e.target.value)}
-                                    placeholder="roberto@hospital.com"
-                                    className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block font-bold text-slate-700 uppercase mb-1">Senha de Acesso *</label>
-                                <input
-                                    type="password"
-                                    required
-                                    minLength={6}
-                                    value={newStaffPassword}
-                                    onChange={(e) => setNewStaffPassword(e.target.value)}
-                                    placeholder="Mínimo 6 caracteres"
-                                    className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block font-bold text-slate-700 uppercase mb-1">Função / Cargo *</label>
-                                <select
-                                    value={newStaffRole}
-                                    onChange={(e) => setNewStaffRole(e.target.value as 'medico' | 'recepcao' | 'triagem' | 'gerente')}
-                                    className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-semibold"
-                                >
-                                    <option value="recepcao">Recepção</option>
-                                    <option value="triagem">Triagem / Enfermagem</option>
-                                    <option value="medico">Médico</option>
-                                    <option value="gerente">Gerente do Dia</option>
-                                </select>
-                            </div>
-
-                            {newStaffRole === 'medico' && (
-                                <div className="grid grid-cols-2 gap-3 pt-1">
-                                    <div>
-                                        <label className="block font-bold text-slate-700 uppercase mb-1">CRM *</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            value={newStaffCrm}
-                                            onChange={(e) => setNewStaffCrm(e.target.value)}
-                                            placeholder="Ex: 123456/SP"
-                                            className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block font-bold text-slate-700 uppercase mb-1">Especialidade</label>
-                                        <input
-                                            type="text"
-                                            value={newStaffSpecialty}
-                                            onChange={(e) => setNewStaffSpecialty(e.target.value)}
-                                            placeholder="Ex: Pediatria"
-                                            className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500"
-                                        />
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-                                <button
-                                    type="button"
-                                    onClick={() => setIsStaffModalOpen(false)}
-                                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={savingStaff}
-                                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow disabled:bg-indigo-300"
-                                >
-                                    {savingStaff ? 'Salvando...' : 'Cadastrar Colaborador'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <NovoColaboradorModal
+                isOpen={isStaffModalOpen}
+                onClose={() => setIsStaffModalOpen(false)}
+                onSuccess={loadData}
+            />
         </div>
     );
 };

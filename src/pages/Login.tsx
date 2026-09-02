@@ -24,33 +24,52 @@ export const Login: React.FC = () => {
             if (error) throw error;
 
             if (data.user) {
-                // Busca o perfil correspondente na tabela profiles
+                // Tenta buscar o perfil na tabela profiles usando .maybeSingle() para evitar exceção de linha ausente
                 const { data: profile, error: profileError } = await supabase
                     .from('profiles')
                     .select('role')
                     .eq('id', data.user.id)
-                    .single();
+                    .maybeSingle();
 
-                if (profileError || !profile) {
-                    throw new Error('Perfil de usuário não encontrado no sistema.');
+                if (profileError) {
+                    console.error('Erro ao buscar perfil:', profileError);
                 }
 
-                // Redireciona conforme o papel do usuário
-                const role = profile.role;
-                if (role === 'gerente_geral' || role === 'gerente_plantao' || role === 'gerente') {
+                // Obtém a função a partir da tabela profiles ou do user_metadata do Auth
+                const rawRole = profile?.role || data.user.user_metadata?.role || '';
+
+                if (!rawRole) {
+                    throw new Error('Perfil de usuário não encontrado na tabela profiles nem nos metadados da conta.');
+                }
+
+                // Normaliza o texto do cargo (remove acentos, espaços, hífens e converte para minúsculas)
+                const roleNormalized = rawRole
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[\s_-]+/g, '');
+
+                // Redireciona de forma flexível testando as variações do cargo
+                if (roleNormalized.includes('gerente') || roleNormalized.includes('admin')) {
                     navigate('/gerencia');
-                } else if (role === 'recepcao' || role === 'recepcionista') {
+                } else if (roleNormalized.includes('recepc')) {
                     navigate('/recepcao');
-                } else if (role === 'medico') {
+                } else if (roleNormalized.includes('triagem') || roleNormalized.includes('enferm')) {
+                    navigate('/triagem');
+                } else if (roleNormalized.includes('medic')) {
                     navigate('/medico');
                 } else {
-                    navigate('/');
+                    setErrorMessage(`O cargo "${rawRole}" não possui uma rota configurada no sistema.`);
                 }
             }
         } catch (err: unknown) {
+            console.error('Erro de Autenticação:', err);
             const message = err instanceof Error ? err.message : 'Erro ao realizar login.';
-            if (message.includes('Invalid login credentials')) {
-                setErrorMessage('E-mail ou senha incorretos.');
+            
+            if (message.includes('Email not confirmed')) {
+                setErrorMessage('O e-mail deste usuário ainda não foi confirmado. Acesse o painel do Supabase (Authentication > Email) e desative a opção "Confirm email".');
+            } else if (message.includes('Invalid login credentials')) {
+                setErrorMessage('E-mail ou senha incorretos (ou usuário ainda não cadastrado no Supabase Auth).');
             } else {
                 setErrorMessage(message);
             }
