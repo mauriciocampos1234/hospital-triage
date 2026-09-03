@@ -1,13 +1,30 @@
 export type UserRole =
     | 'recepcao'
     | 'enfermeira_triagem'
-    | 'medico'
     | 'enfermeira_medicamento'
+    | 'enfermeira_uti'
+    | 'auxiliar_enfermagem'
+    | 'auxiliar_uti'
+    | 'medico'
+    | 'medico_uti'
     | 'farmacia'
-    | 'emergencia'
     | 'gerente'
     | 'gerente_plantao'
     | 'gerente_geral';
+
+export interface Profile {
+    id: string;
+    name: string;
+    role: UserRole;
+    specialty?: string | null; // ex: 'Clínico Geral', 'Ortopedia', 'Radiologia', 'Pediatria', 'Intensivista / UTI'
+    prefix?: 'Dr.' | 'Dra.' | '' | null;
+    crm?: string | null;
+    coren?: string | null;
+    registration_number?: string | null;
+    document_number?: string | null;
+    is_health_professional?: boolean;
+    created_at?: string;
+}
 
 export type PatientStatus =
     | 'aguardando_triagem'
@@ -17,19 +34,6 @@ export type PatientStatus =
     | 'em_atendimento'
     | 'finalizado'
     | 'cancelado';
-
-export interface Profile {
-    id: string;
-    name: string;
-    role: UserRole;
-    prefix?: 'Dr.' | 'Dra.' | '' | null;
-    crm?: string | null;
-    coren?: string | null;
-    registration_number?: string | null;
-    document_number?: string | null;
-    is_health_professional?: boolean;
-    created_at?: string;
-}
 
 export interface Patient {
     id: string;

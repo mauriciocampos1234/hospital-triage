@@ -72,6 +72,7 @@ export const DashboardGerente: React.FC = () => {
     }, [fetchData]);
 
     // Função para Deletar Colaborador (DELETE)
+    // Função para Deletar Colaborador (DELETE)
     const handleDeleteCollaborator = async (id: string, name: string) => {
         if (!window.confirm(`Tem certeza de que deseja remover o colaborador "${name}"?`)) {
             return;
@@ -85,10 +86,13 @@ export const DashboardGerente: React.FC = () => {
 
             if (error) throw error;
 
+            // Atualiza estado local imediatamente e sincroniza com o banco
+            setCollaborators((prev) => prev.filter((c) => c.id !== id));
             fetchData();
-        } catch (err) {
+        } catch (err: unknown) {
             console.error('Erro ao excluir colaborador:', err);
-            alert('Erro ao excluir registro. Verifique suas permissões de acesso (RLS) no Supabase.');
+            const errorMessage = err instanceof Error ? err.message : 'Verifique suas permissões no Supabase (RLS).';
+            alert(`Erro ao excluir registro: ${errorMessage}`);
         }
     };
 
@@ -106,23 +110,26 @@ export const DashboardGerente: React.FC = () => {
         (c.role || '').toLowerCase().includes(searchCollaborator.toLowerCase())
     );
 
-    // Filtro Seguro de Pacientes (Evita erro de null/undefined)
+    // Filtro Seguro de Pacientes
     const filteredPatients = patients.filter((p) =>
         (p.name || '').toLowerCase().includes(searchPatient.toLowerCase()) ||
         (p.cpf || '').includes(searchPatient) ||
         (p.ticket_number || '').toLowerCase().includes(searchPatient.toLowerCase())
     );
 
-    const formatRoleName = (role: string) => {
+    const formatRoleName = (role: string, specialty?: string | null) => {
         switch (role) {
             case 'gerente_geral': return 'Gerente Geral';
             case 'gerente_plantao': return 'Gerente de Plantão';
-            case 'gerente': return 'Gerente';
-            case 'medico': return 'Médico(a)';
-            case 'enfermeira_triagem': return 'Enfermeira (Triagem)';
-            case 'enfermeira_medicamento': return 'Enfermeira (Medicação)';
+            case 'gerente': return 'Gerente Administrativo';
+            case 'medico': return specialty ? `Médico(a) (${specialty})` : 'Médico(a)';
+            case 'medico_uti': return specialty ? `Médico(a) UTI (${specialty})` : 'Médico(a) Intensivista (UTI)';
+            case 'enfermeira_triagem': return 'Enfermeiro(a) - Triagem';
+            case 'enfermeira_medicamento': return 'Enfermeiro(a) - Medicação';
+            case 'enfermeira_uti': return 'Enfermeiro(a) - UTI / Emergência';
+            case 'auxiliar_enfermagem': return 'Auxiliar / Téc. Enfermagem';
+            case 'auxiliar_uti': return 'Aux. Enfermagem - UTI / Emergência';
             case 'farmacia': return 'Farmácia / Insumos';
-            case 'emergencia': return 'Emergência / UTI';
             case 'recepcao':
             case 'recepcionista': return 'Recepção / Atendimento';
             default: return role || 'Não informado';
@@ -131,40 +138,42 @@ export const DashboardGerente: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-slate-100 flex flex-col">
-            {/* Header Superior */}
-            <header className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-indigo-600/30 rounded-xl border border-indigo-500/30">
+            {/* Header Superior Responsivo */}
+            <header className="bg-slate-900 text-white px-4 sm:px-6 py-4 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 shadow-md">
+                <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-indigo-600/30 rounded-xl border border-indigo-500/30 shrink-0">
                         <ShieldCheck className="w-6 h-6 text-indigo-400" />
                     </div>
-                    <div>
-                        <h1 className="text-xl font-bold">Painel de Gerência & Monitoramento</h1>
-                        <p className="text-xs text-slate-400">
+                    <div className="min-w-0 flex-1">
+                        <h1 className="text-base sm:text-xl font-bold truncate">Painel de Gerência & Monitoramento</h1>
+                        <p className="text-xs text-slate-400 truncate">
                             Gestor: {profile?.name} ({formatRoleName(profile?.role || '')})
                         </p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-end">
                     <button
                         onClick={() => setIsCreateModalOpen(true)}
-                        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow transition"
+                        className="flex-1 md:flex-initial flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 sm:px-4 py-2.5 rounded-xl shadow transition whitespace-nowrap"
                     >
-                        <UserPlus className="w-4 h-4" /> Cadastrar Colaborador
+                        <UserPlus className="w-4 h-4 shrink-0" /> 
+                        <span>Cadastrar Colaborador</span>
                     </button>
 
                     <button
                         onClick={signOut}
-                        className="flex items-center gap-2 bg-slate-800 hover:bg-red-600/20 hover:text-red-400 text-slate-300 text-xs px-3 py-2.5 rounded-xl transition"
+                        className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-red-600/20 hover:text-red-400 text-slate-300 text-xs px-3 sm:px-4 py-2.5 rounded-xl transition whitespace-nowrap shrink-0"
                     >
-                        <LogOut className="w-4 h-4" /> Sair
+                        <LogOut className="w-4 h-4 shrink-0" /> 
+                        <span>Sair</span>
                     </button>
                 </div>
             </header>
 
             {/* Navegação por Abas */}
-            <div className="bg-white border-b border-slate-200 px-6 pt-3">
-                <div className="max-w-7xl mx-auto flex gap-6">
+            <div className="bg-white border-b border-slate-200 px-4 sm:px-6 pt-3 overflow-x-auto">
+                <div className="max-w-7xl mx-auto flex gap-4 sm:gap-6 whitespace-nowrap">
                     <button
                         onClick={() => setActiveTab('fluxo')}
                         className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'fluxo'
@@ -198,7 +207,7 @@ export const DashboardGerente: React.FC = () => {
             </div>
 
             {/* Conteúdo do Painel */}
-            <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
+            <main className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
 
                 {/* ABA 1: FLUXO DE ATENDIMENTO */}
                 {activeTab === 'fluxo' && (
@@ -247,7 +256,7 @@ export const DashboardGerente: React.FC = () => {
                         </div>
 
                         {/* Tabela do Fluxo */}
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                        <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
                             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
                                 <BarChart3 className="w-5 h-5 text-indigo-600" /> Fluxo em Tempo Real
                             </h2>
@@ -320,7 +329,7 @@ export const DashboardGerente: React.FC = () => {
 
                 {/* ABA 2: CONSULTA E GESTÃO DE COLABORADORES */}
                 {activeTab === 'colaboradores' && (
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                    <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
                         <div className="flex justify-between items-center flex-wrap gap-4">
                             <div>
                                 <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
@@ -365,7 +374,7 @@ export const DashboardGerente: React.FC = () => {
                                                 </td>
                                                 <td className="py-3 px-3">
                                                     <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                                                        {formatRoleName(c.role)}
+                                                        {formatRoleName(c.role, c.specialty)}
                                                     </span>
                                                 </td>
                                                 <td className="py-3 px-3 text-slate-500 font-semibold">
@@ -414,7 +423,7 @@ export const DashboardGerente: React.FC = () => {
 
                 {/* ABA 3: HISTÓRICO COMPLETO DE PACIENTES */}
                 {activeTab === 'pacientes' && (
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                    <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
                         <div className="flex justify-between items-center flex-wrap gap-4">
                             <div>
                                 <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
