@@ -1,31 +1,40 @@
+// src/components/ProtectedRoute.tsx
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { UserRole } from '../types';
 
 interface ProtectedRouteProps {
     children: React.ReactNode;
-    allowedRoles?: UserRole[];
+    allowedRoles?: string[];
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowedRoles }) => {
     const { user, profile, loading } = useAuth();
+    const location = useLocation();
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white font-bold text-sm">
-                Carregando permissões...
+            <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 font-sans text-xs">
+                Verificando permissões...
             </div>
         );
     }
 
     if (!user) {
-        return <Navigate to="/login" replace />;
+        return <Navigate to="/" state={{ from: location }} replace />;
     }
 
-    if (allowedRoles && profile && !allowedRoles.includes(profile.role as UserRole)) {
-        return <Navigate to="/login" replace />;
+    // Permite acesso se a role do perfil estiver explicitamente listada ou se for qualquer variação de gerente
+    const hasPermission = !allowedRoles || (profile && (
+        allowedRoles.includes(profile.role) ||
+        (profile.role.includes('gerente') && allowedRoles.some(r => r.includes('gerente')))
+    ));
+
+    if (!hasPermission) {
+        return <Navigate to="/" replace />;
     }
 
     return <>{children}</>;
 };
+
+export default ProtectedRoute;

@@ -1,516 +1,521 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../config/supabase';
+import { Profile, UserRole } from '../types';
 import { useAuth } from '../hooks/useAuth';
-import { Patient, Profile } from '../types';
 import { NovoColaboradorModal } from '../components/modals/NovoColaboradorModal';
 import { EditarColaboradorModal } from '../components/modals/EditarColaboradorModal';
-import {
-    BarChart3, Users, UserPlus, Clock, CheckCircle2,
-    LogOut, ShieldCheck, Activity, Search, Contact, Edit3, Trash2
+import { 
+    Users, 
+    UserPlus, 
+    Stethoscope, 
+    Search, 
+    RefreshCw, 
+    LogOut, 
+    BadgeCheck, 
+    Building2,
+    Briefcase,
+    Sparkles,
+    UserCheck,
+    UserCog,
+    HeartPulse,
+    ShieldCheck,
+    UserPlus2,
+    X
 } from 'lucide-react';
 
+// Categorias Principais para as Abas
+const MAIN_CATEGORIES = [
+    'TODAS',
+    'Médicos',
+    'Enfermeiros',
+    'Auxiliares de Enfermagem',
+    'Recepção',
+    'Limpeza & Higienização',
+    'Gestão & Administração'
+] as const;
+
 export const DashboardGerente: React.FC = () => {
-    const { profile, signOut } = useAuth();
-
-    // Abas do Painel
-    const [activeTab, setActiveTab] = useState<'fluxo' | 'colaboradores' | 'pacientes'>('fluxo');
-
-    // Estados de Dados
-    const [patients, setPatients] = useState<Patient[]>([]);
+    const { user, profile, signOut } = useAuth();
     const [collaborators, setCollaborators] = useState<Profile[]>([]);
     const [loading, setLoading] = useState(true);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedCategoryTab, setSelectedCategoryTab] = useState<string>('TODAS');
 
-    // Estados de Modais
-    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-    const [selectedCollaborator, setSelectedCollaborator] = useState<Profile | null>(null);
+    // Mapeamento local de Assistentes/Apoio do Dia por Colaborador (ID Médico -> Nome/ID Auxiliar)
+    const [dailyAssignments, setDailyAssignments] = useState<Record<string, { assistantName: string; isShiftManager?: boolean }>>({});
 
-    // Filtros de busca
-    const [searchCollaborator, setSearchCollaborator] = useState('');
-    const [searchPatient, setSearchPatient] = useState('');
+    // Modais
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [editingCollaborator, setEditingCollaborator] = useState<Profile | null>(null);
+    const [assigningDoctor, setAssigningDoctor] = useState<Profile | null>(null);
+    const [selectedAssistantId, setSelectedAssistantId] = useState<string>('');
 
-    const fetchData = useCallback(async () => {
+    const loadCollaborators = useCallback(async () => {
         try {
-            // 1. Busca pacientes
-            const { data: patientData } = await supabase
-                .from('patients')
-                .select('*')
-                .order('created_at', { ascending: false });
-
-            setPatients((patientData as Patient[]) || []);
-
-            // 2. Busca colaboradores cadastrados
-            const { data: profileData } = await supabase
+            const { data, error } = await supabase
                 .from('profiles')
                 .select('*')
                 .order('name', { ascending: true });
 
-            setCollaborators((profileData as Profile[]) || []);
+            if (error) throw error;
+            setCollaborators(data || []);
         } catch (err) {
-            console.error('Erro ao carregar dados do painel:', err);
+            console.error('Erro ao buscar colaboradores:', err);
         } finally {
             setLoading(false);
         }
     }, []);
 
+    const handleRefresh = async () => {
+        setLoading(true);
+        await loadCollaborators();
+    };
+
     useEffect(() => {
-        const timer = setTimeout(() => {
-            fetchData();
-        }, 0);
+        let isMounted = true;
 
-        const channel = supabase
-            .channel('public:patients:manager')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, () => {
-                fetchData();
-            })
-            .subscribe();
+        const fetchData = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .order('name', { ascending: true });
 
-        return () => {
-            clearTimeout(timer);
-            supabase.removeChannel(channel);
+                if (isMounted) {
+                    if (error) throw error;
+                    setCollaborators(data || []);
+                }
+            } catch (err) {
+                console.error('Erro ao buscar colaboradores:', err);
+            } finally {
+                if (isMounted) setLoading(false);
+            }
         };
-    }, [fetchData]);
 
-    // Função para Deletar Colaborador (DELETE)
-    const handleDeleteCollaborator = async (id: string, name: string) => {
-        if (!window.confirm(`Tem certeza de que deseja remover o colaborador "${name}"?`)) {
-            return;
-        }
+        fetchData();
+        return () => { isMounted = false; };
+    }, []);
 
-        try {
-            const { error } = await supabase
-                .from('profiles')
-                .delete()
-                .eq('id', id);
+    // Classifica o colaborador na Macro-Categoria exata
+    const getCollaboratorCategory = (c: Profile): string => {
+        const r = (c.role || '').toLowerCase();
+        if (r.includes('medico')) return 'Médicos';
+        if (r.includes('auxiliar')) return 'Auxiliares de Enfermagem';
+        if (r.includes('enferm') || r.includes('triagem')) return 'Enfermeiros';
+        if (r.includes('recep')) return 'Recepção';
+        if (r.includes('limpeza') || r.includes('higieniz') || r.includes('servicos_gerais')) return 'Limpeza & Higienização';
+        if (r.includes('gerente')) return 'Gestão & Administração';
+        return 'Outros';
+    };
 
-            if (error) throw error;
-
-            // Atualiza estado local imediatamente e sincroniza com o banco
-            setCollaborators((prev) => prev.filter((c) => c.id !== id));
-            fetchData();
-        } catch (err: unknown) {
-            console.error('Erro ao excluir colaborador:', err);
-            const errorMessage = err instanceof Error ? err.message : 'Verifique suas permissões no Supabase (RLS).';
-            alert(`Erro ao excluir registro: ${errorMessage}`);
+    // Ícones temáticos para cada aba
+    const getCategoryIcon = (category: string) => {
+        switch (category) {
+            case 'Médicos': return <Stethoscope className="w-3.5 h-3.5 text-blue-400" />;
+            case 'Enfermeiros': return <HeartPulse className="w-3.5 h-3.5 text-rose-400" />;
+            case 'Auxiliares de Enfermagem': return <UserCheck className="w-3.5 h-3.5 text-emerald-400" />;
+            case 'Recepção': return <UserCog className="w-3.5 h-3.5 text-purple-400" />;
+            case 'Limpeza & Higienização': return <Sparkles className="w-3.5 h-3.5 text-amber-400" />;
+            case 'Gestão & Administração': return <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />;
+            default: return <Users className="w-3.5 h-3.5 text-slate-400" />;
         }
     };
 
-    // Métricas de Pacientes
-    const totalPatients = patients.length;
-    const waitingTriage = patients.filter((p) => p.status === 'aguardando_triagem').length;
-    const waitingDoctor = patients.filter((p) => 
-        p.status === 'aguardando_atendimento_medico' || p.status === 'aguardando_atendimento'
-    ).length;
-    const completed = patients.filter((p) => p.status === 'finalizado').length;
+    // Lista de potenciais assistentes (Enfermeiros e Auxiliares)
+    const availableAssistants = useMemo(() => {
+        return collaborators.filter(c => {
+            const cat = getCollaboratorCategory(c);
+            return cat === 'Enfermeiros' || cat === 'Auxiliares de Enfermagem';
+        });
+    }, [collaborators]);
 
-    // Filtro Seguro de Colaboradores
-    const filteredCollaborators = collaborators.filter((c) =>
-        (c.name || '').toLowerCase().includes(searchCollaborator.toLowerCase()) ||
-        (c.role || '').toLowerCase().includes(searchCollaborator.toLowerCase())
-    );
+    // Filtragem por Busca e Categoria
+    const filteredCollaborators = useMemo(() => {
+        return collaborators.filter((c) => {
+            const matchesSearch = 
+                c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (c.specialty && c.specialty.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (c.document_number && c.document_number.includes(searchTerm)) ||
+                (c.crm && c.crm.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (c.coren && c.coren.toLowerCase().includes(searchTerm.toLowerCase()));
 
-    // Filtro Seguro de Pacientes
-    const filteredPatients = patients.filter((p) =>
-        (p.name || '').toLowerCase().includes(searchPatient.toLowerCase()) ||
-        (p.cpf || '').includes(searchPatient) ||
-        (p.ticket_number || '').toLowerCase().includes(searchPatient.toLowerCase())
-    );
+            const category = getCollaboratorCategory(c);
+            const matchesTab = selectedCategoryTab === 'TODAS' || category === selectedCategoryTab;
 
-    const formatRoleName = (role: string, specialty?: string | null) => {
-        switch (role) {
-            case 'gerente_geral': return 'Gerente Geral';
-            case 'gerente_plantao': return 'Gerente de Plantão';
-            case 'gerente': return 'Gerente Administrativo';
-            case 'medico': return specialty ? `Médico(a) (${specialty})` : 'Médico(a)';
-            case 'medico_uti': return specialty ? `Médico(a) UTI (${specialty})` : 'Médico(a) Intensivista (UTI)';
-            case 'enfermeira_triagem': return 'Enfermeiro(a) - Triagem';
-            case 'enfermeira_medicamento': return 'Enfermeiro(a) - Medicação';
-            case 'enfermeira_uti': return 'Enfermeiro(a) - UTI / Emergência';
-            case 'auxiliar_enfermagem': return 'Auxiliar / Téc. Enfermagem';
-            case 'auxiliar_uti': return 'Aux. Enfermagem - UTI / Emergência';
-            case 'farmacia': return 'Farmácia / Insumos';
-            case 'recepcao':
-            case 'recepcionista': return 'Recepção / Atendimento';
-            default: return role || 'Não informado';
-        }
+            return matchesSearch && matchesTab;
+        });
+    }, [collaborators, searchTerm, selectedCategoryTab]);
+
+    const formatRoleLabel = (role: UserRole | string) => {
+        const map: Record<string, string> = {
+            gerente_geral: 'Gerente Geral',
+            gerente_plantao: 'Gerente de Plantão',
+            gerente: 'Gerente',
+            recepcao: 'Recepção',
+            recepcionista: 'Recepcionista',
+            triagem: 'Enfermeiro(a) Triagem',
+            enfermeiro: 'Enfermeiro(a)',
+            enfermagem: 'Equipe Enfermagem',
+            enfermeira_triagem: 'Enfermeira Triagem',
+            enfermeira_medicamento: 'Enfermeira Medicação',
+            enfermeira_uti: 'Enfermeira UTI',
+            auxiliar_enfermagem: 'Aux. Enfermagem',
+            auxiliar_uti: 'Aux. UTI',
+            limpeza: 'Agente de Higienização',
+            higienizacao: 'Equipe de Limpeza',
+            servicos_gerais: 'Serviços Gerais',
+            medico: 'Médico(a)',
+            medico_uti: 'Médico(a) UTI',
+        };
+        return map[role] || role;
+    };
+
+    const handleSaveAssignment = () => {
+        if (!assigningDoctor) return;
+        
+        const assistant = availableAssistants.find(a => a.id === selectedAssistantId);
+        setDailyAssignments(prev => ({
+            ...prev,
+            [assigningDoctor.id]: {
+                assistantName: assistant ? assistant.name : '',
+            }
+        }));
+        setAssigningDoctor(null);
+        setSelectedAssistantId('');
+    };
+
+    const toggleShiftManager = (collabId: string) => {
+        setDailyAssignments(prev => ({
+            ...prev,
+            [collabId]: {
+                ...prev[collabId],
+                assistantName: prev[collabId]?.assistantName || '',
+                isShiftManager: !prev[collabId]?.isShiftManager
+            }
+        }));
     };
 
     return (
-        <div className="min-h-screen bg-slate-100 flex flex-col">
-            {/* Header Superior Responsivo */}
-            <header className="bg-slate-900 text-white px-4 sm:px-6 py-4 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 shadow-md">
-                <div className="flex items-center gap-3 min-w-0">
-                    <div className="p-2 bg-indigo-600/30 rounded-xl border border-indigo-500/30 shrink-0">
-                        <ShieldCheck className="w-6 h-6 text-indigo-400" />
+        <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+            {/* Topbar */}
+            <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between sticky top-0 z-20">
+                <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-600/30">
+                        <Building2 className="w-6 h-6 text-white" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                        <h1 className="text-base sm:text-xl font-bold truncate">Painel de Gerência & Monitoramento</h1>
-                        <p className="text-xs text-slate-400 truncate">
-                            Gestor: {profile?.name} ({formatRoleName(profile?.role || '')})
-                        </p>
+                    <div>
+                        <h1 className="text-lg font-black text-white leading-tight tracking-wide">Painel de Gestão Hospitalar</h1>
+                        <p className="text-xs text-slate-400">Escala de Plantão, Quadro Profissional e Vínculos</p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-end">
-                    <button
-                        onClick={() => setIsCreateModalOpen(true)}
-                        className="flex-1 md:flex-initial flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 sm:px-4 py-2.5 rounded-xl shadow transition whitespace-nowrap"
-                    >
-                        <UserPlus className="w-4 h-4 shrink-0" /> 
-                        <span>Cadastrar Colaborador</span>
-                    </button>
+                <div className="flex items-center gap-4">
+                    <div className="text-right hidden sm:block">
+                        <span className="block text-xs font-bold text-slate-200">{profile?.name || user?.email}</span>
+                        <span className="block text-[10px] text-indigo-400 uppercase font-semibold">
+                            {profile?.role ? formatRoleLabel(profile.role) : 'Gestão'}
+                        </span>
+                    </div>
 
-                    <button
+                    <button 
                         onClick={signOut}
-                        className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-red-600/20 hover:text-red-400 text-slate-300 text-xs px-3 sm:px-4 py-2.5 rounded-xl transition whitespace-nowrap shrink-0"
+                        className="flex items-center gap-2 bg-slate-800 hover:bg-red-500/20 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/30 px-3.5 py-2 rounded-xl text-xs font-bold transition"
+                        title="Encerrar Sessão"
                     >
-                        <LogOut className="w-4 h-4 shrink-0" /> 
-                        <span>Sair</span>
+                        <LogOut className="w-4 h-4" />
+                        <span className="hidden sm:inline">Sair</span>
                     </button>
                 </div>
             </header>
 
-            {/* Navegação por Abas */}
-            <div className="bg-white border-b border-slate-200 px-4 sm:px-6 pt-3 overflow-x-auto">
-                <div className="max-w-7xl mx-auto flex gap-4 sm:gap-6 whitespace-nowrap">
-                    <button
-                        onClick={() => setActiveTab('fluxo')}
-                        className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'fluxo'
-                                ? 'border-indigo-600 text-indigo-600'
-                                : 'border-transparent text-slate-500 hover:text-slate-800'
-                            }`}
-                    >
-                        <BarChart3 className="w-4 h-4" /> Fluxo de Atendimento
-                    </button>
+            {/* Conteúdo Principal */}
+            <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
-                    <button
-                        onClick={() => setActiveTab('colaboradores')}
-                        className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'colaboradores'
-                                ? 'border-indigo-600 text-indigo-600'
-                                : 'border-transparent text-slate-500 hover:text-slate-800'
-                            }`}
-                    >
-                        <Contact className="w-4 h-4" /> Colaboradores ({collaborators.length})
-                    </button>
+                {/* Banner e Ações */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-slate-900/80 border border-slate-800 rounded-3xl p-6 shadow-xl">
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-indigo-400">
+                            <Users className="w-8 h-8" />
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-black text-white">Quadro Geral de Colaboradores</h2>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                                Total de <strong className="text-indigo-400">{collaborators.length}</strong> profissionais registrados
+                            </p>
+                        </div>
+                    </div>
 
-                    <button
-                        onClick={() => setActiveTab('pacientes')}
-                        className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'pacientes'
-                                ? 'border-indigo-600 text-indigo-600'
-                                : 'border-transparent text-slate-500 hover:text-slate-800'
-                            }`}
-                    >
-                        <Users className="w-4 h-4" /> Todos os Pacientes ({patients.length})
-                    </button>
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                        <button
+                            onClick={handleRefresh}
+                            className="p-3 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-2xl transition"
+                            title="Atualizar dados"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        </button>
+
+                        <button
+                            onClick={() => setIsAddModalOpen(true)}
+                            className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-5 py-3 rounded-2xl text-xs shadow-lg shadow-indigo-600/30 transition"
+                        >
+                            <UserPlus className="w-4 h-4" />
+                            <span>Novo Colaborador</span>
+                        </button>
+                    </div>
                 </div>
-            </div>
 
-            {/* Conteúdo do Painel */}
-            <main className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
+                {/* Pesquisa */}
+                <div className="relative">
+                    <Search className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+                    <input
+                        type="text"
+                        placeholder="Buscar por nome, especialidade, CRM, COREN ou CPF..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 text-slate-200 placeholder-slate-500 rounded-2xl pl-11 pr-4 py-3 text-xs outline-none focus:border-indigo-500 transition shadow-inner"
+                    />
+                </div>
 
-                {/* ABA 1: FLUXO DE ATENDIMENTO */}
-                {activeTab === 'fluxo' && (
-                    <div className="space-y-6">
-                        {/* Cards de Métricas */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
-                                <div>
-                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Total Geral</span>
-                                    <span className="text-3xl font-black text-slate-800">{totalPatients}</span>
-                                </div>
-                                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
-                                    <Users className="w-6 h-6" />
-                                </div>
-                            </div>
+                {/* MACRO-ABAS ORGANIZADAS */}
+                <div className="space-y-2">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-1">
+                        Filtrar por Setor / Categoria
+                    </span>
+                    <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-800">
+                        {MAIN_CATEGORIES.map((category) => {
+                            const count = category === 'TODAS' 
+                                ? collaborators.length 
+                                : collaborators.filter(c => getCollaboratorCategory(c) === category).length;
 
-                            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
-                                <div>
-                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Na Triagem</span>
-                                    <span className="text-3xl font-black text-amber-600">{waitingTriage}</span>
-                                </div>
-                                <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
-                                    <Clock className="w-6 h-6" />
-                                </div>
-                            </div>
+                            const isActive = selectedCategoryTab === category;
 
-                            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
-                                <div>
-                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Fila Médica</span>
-                                    <span className="text-3xl font-black text-blue-600">{waitingDoctor}</span>
-                                </div>
-                                <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
-                                    <Activity className="w-6 h-6" />
-                                </div>
-                            </div>
+                            return (
+                                <button
+                                    key={category}
+                                    onClick={() => setSelectedCategoryTab(category)}
+                                    className={`whitespace-nowrap px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 border ${
+                                        isActive
+                                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-600/25'
+                                            : 'bg-slate-900/90 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
+                                    }`}
+                                >
+                                    {getCategoryIcon(category)}
+                                    <span>{category}</span>
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                        isActive ? 'bg-indigo-700 text-white' : 'bg-slate-800 text-slate-400'
+                                    }`}>
+                                        {count}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
 
-                            <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
-                                <div>
-                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Concluídos</span>
-                                    <span className="text-3xl font-black text-emerald-600">{completed}</span>
-                                </div>
-                                <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl">
-                                    <CheckCircle2 className="w-6 h-6" />
-                                </div>
-                            </div>
-                        </div>
+                {/* LISTAGEM DOS CARDS */}
+                {loading ? (
+                    <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-12 text-center text-slate-500 text-xs">
+                        Carregando equipe médica e administrativa...
+                    </div>
+                ) : filteredCollaborators.length === 0 ? (
+                    <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-12 text-center text-slate-500 text-xs">
+                        Nenhum colaborador encontrado nesta categoria.
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredCollaborators.map((item) => {
+                            const category = getCollaboratorCategory(item);
+                            const assignment = dailyAssignments[item.id];
+                            const isDoctor = category === 'Médicos';
 
-                        {/* Tabela do Fluxo */}
-                        <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-                            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                                <BarChart3 className="w-5 h-5 text-indigo-600" /> Fluxo em Tempo Real
-                            </h2>
-
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left text-xs border-collapse">
-                                    <thead>
-                                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                                            <th className="py-3 px-3">Senha</th>
-                                            <th className="py-3 px-3">Nome</th>
-                                            <th className="py-3 px-3">Prioridade</th>
-                                            <th className="py-3 px-3">Classificação</th>
-                                            <th className="py-3 px-3">Status</th>
-                                            <th className="py-3 px-3">Médico / Sala</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {loading ? (
-                                            <tr>
-                                                <td colSpan={6} className="py-6 text-center text-slate-400">Carregando relatório...</td>
-                                            </tr>
-                                        ) : patients.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={6} className="py-6 text-center text-slate-400">Nenhum registro no momento.</td>
-                                            </tr>
-                                        ) : (
-                                            patients.map((p) => (
-                                                <tr key={p.id} className="hover:bg-slate-50 transition">
-                                                    <td className="py-3 px-3 font-bold text-indigo-600">{p.ticket_number || '---'}</td>
-                                                    <td className="py-3 px-3 font-semibold text-slate-800">{p.name}</td>
-                                                    <td className="py-3 px-3">
-                                                        {p.is_priority ? (
-                                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700">
-                                                                Preferencial
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-slate-400">Normal</span>
-                                                        )}
-                                                    </td>
-                                                    <td className="py-3 px-3">
-                                                        <span className="uppercase font-bold text-[10px] text-slate-600">
-                                                            {p.risk_level || 'Pendente'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-3 px-3">
-                                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                                            p.status === 'aguardando_triagem'
-                                                                ? 'bg-amber-100 text-amber-700'
-                                                                : p.status === 'aguardando_atendimento_medico' || p.status === 'aguardando_atendimento'
-                                                                    ? 'bg-blue-100 text-blue-700'
-                                                                    : p.status === 'em_atendimento'
-                                                                        ? 'bg-indigo-100 text-indigo-700 animate-pulse'
-                                                                        : 'bg-emerald-100 text-emerald-700'
-                                                        }`}>
-                                                            {(p.status || '').replace(/_/g, ' ')}
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-3 px-3 text-slate-600 font-medium">
-                                                        {p.doctor_room || '---'}
-                                                    </td>
-                                                </tr>
-                                            ))
+                            return (
+                                <div 
+                                    key={item.id}
+                                    className="bg-slate-900/90 border border-slate-800 hover:border-indigo-500/50 rounded-3xl p-5 transition flex flex-col justify-between space-y-4 shadow-lg group relative overflow-hidden"
+                                >
+                                    <div className="space-y-3">
+                                        {/* Tag de Gerente do Dia / Plantão */}
+                                        {assignment?.isShiftManager && (
+                                            <div className="bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase px-2.5 py-1 rounded-xl flex items-center gap-1.5 w-fit">
+                                                <ShieldCheck className="w-3.5 h-3.5" />
+                                                <span>Gerente de Plantão do Dia</span>
+                                            </div>
                                         )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                )}
 
-                {/* ABA 2: CONSULTA E GESTÃO DE COLABORADORES */}
-                {activeTab === 'colaboradores' && (
-                    <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-                        <div className="flex justify-between items-center flex-wrap gap-4">
-                            <div>
-                                <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                                    <Contact className="w-5 h-5 text-indigo-600" /> Corpo de Colaboradores do Hospital
-                                </h2>
-                                <p className="text-xs text-slate-400">Gerencie permissões, edite dados ou remova acessos de funcionários</p>
-                            </div>
-
-                            <div className="relative w-full sm:w-72">
-                                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                                <input
-                                    type="text"
-                                    value={searchCollaborator}
-                                    onChange={(e) => setSearchCollaborator(e.target.value)}
-                                    placeholder="Buscar por nome ou cargo..."
-                                    className="w-full pl-9 pr-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-600"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs border-collapse">
-                                <thead>
-                                    <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                                        <th className="py-3 px-3">Nome Profissional</th>
-                                        <th className="py-3 px-3">Função / Cargo</th>
-                                        <th className="py-3 px-3">Identificação / Conselho</th>
-                                        <th className="py-3 px-3">Data de Cadastro</th>
-                                        <th className="py-3 px-3 text-right">Ações</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {filteredCollaborators.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={5} className="py-6 text-center text-slate-400">Nenhum colaborador localizado.</td>
-                                        </tr>
-                                    ) : (
-                                        filteredCollaborators.map((c) => (
-                                            <tr key={c.id} className="hover:bg-slate-50 transition">
-                                                <td className="py-3 px-3 font-bold text-slate-800">
-                                                    {c.prefix ? `${c.prefix} ` : ''}{c.name}
-                                                </td>
-                                                <td className="py-3 px-3">
-                                                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                                                        {formatRoleName(c.role, c.specialty)}
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div>
+                                                {/* Especialidade destacada nos Médicos */}
+                                                {item.specialty && (
+                                                    <span className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-wider block">
+                                                        {item.specialty}
                                                     </span>
-                                                </td>
-                                                <td className="py-3 px-3 text-slate-500 font-semibold">
-                                                    {c.crm 
-                                                        ? `CRM: ${c.crm}` 
-                                                        : c.coren 
-                                                            ? `COREN: ${c.coren}` 
-                                                            : c.crf 
-                                                                ? `CRF: ${c.crf}` 
-                                                                : c.registration_number 
-                                                                    ? `Matrícula: ${c.registration_number}` 
-                                                                    : c.document_number 
-                                                                        ? `Doc: ${c.document_number}` 
-                                                                        : 'N/A'}
-                                                </td>
-                                                <td className="py-3 px-3 text-slate-400">
-                                                    {c.created_at ? new Date(c.created_at).toLocaleDateString('pt-BR') : '---'}
-                                                </td>
-                                                <td className="py-3 px-3 text-right">
-                                                    <div className="flex justify-end gap-1">
-                                                        <button
-                                                            onClick={() => {
-                                                                setSelectedCollaborator(c);
-                                                                setIsEditModalOpen(true);
-                                                            }}
-                                                            className="p-1.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 rounded-lg transition"
-                                                            title="Editar dados"
-                                                        >
-                                                            <Edit3 className="w-4 h-4" />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDeleteCollaborator(c.id, c.name)}
-                                                            className="p-1.5 bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded-lg transition"
-                                                            title="Excluir colaborador"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
+                                                )}
+                                                <h3 className="font-bold text-slate-100 text-base leading-tight group-hover:text-indigo-300 transition mt-0.5">
+                                                    {item.prefix ? `${item.prefix} ` : ''}{item.name}
+                                                </h3>
+                                            </div>
+                                            <span className="px-2.5 py-1 bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-bold rounded-xl shrink-0">
+                                                {formatRoleLabel(item.role)}
+                                            </span>
+                                        </div>
+
+                                        {/* Registros Profissionais */}
+                                        <div className="space-y-1.5 pt-2 border-t border-slate-800/80 text-xs text-slate-400">
+                                            {item.crm && (
+                                                <div className="flex items-center gap-2">
+                                                    <BadgeCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                                    <span>CRM: <strong className="text-slate-200">{item.crm}</strong></span>
+                                                </div>
+                                            )}
+                                            {item.coren && (
+                                                <div className="flex items-center gap-2">
+                                                    <BadgeCheck className="w-3.5 h-3.5 text-blue-400" />
+                                                    <span>COREN: <strong className="text-slate-200">{item.coren}</strong></span>
+                                                </div>
+                                            )}
+                                            {item.crf && (
+                                                <div className="flex items-center gap-2">
+                                                    <BadgeCheck className="w-3.5 h-3.5 text-amber-400" />
+                                                    <span>CRF: <strong className="text-slate-200">{item.crf}</strong></span>
+                                                </div>
+                                            )}
+                                            {item.registration_number && (
+                                                <div className="flex items-center gap-2">
+                                                    <Briefcase className="w-3.5 h-3.5 text-slate-500" />
+                                                    <span>Matrícula: <strong className="text-slate-300">{item.registration_number}</strong></span>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Assistente Atribuído do Dia */}
+                                        {assignment?.assistantName && (
+                                            <div className="p-2.5 bg-indigo-950/40 border border-indigo-800/40 rounded-2xl flex items-center justify-between text-xs">
+                                                <div className="flex items-center gap-2 text-indigo-300">
+                                                    <UserCheck className="w-4 h-4 text-indigo-400" />
+                                                    <span>Apoio: <strong>{assignment.assistantName}</strong></span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Ações / Atribuição de Plantão */}
+                                    <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                                        <button
+                                            onClick={() => toggleShiftManager(item.id)}
+                                            className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1 ${
+                                                assignment?.isShiftManager
+                                                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                                    : 'bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200'
+                                            }`}
+                                            title="Definir responsável do plantão"
+                                        >
+                                            <ShieldCheck className="w-3.5 h-3.5" />
+                                            <span>{assignment?.isShiftManager ? 'Gerente Ativo' : 'Tornar Gerente'}</span>
+                                        </button>
+
+                                        <div className="flex items-center gap-1.5">
+                                            {isDoctor && (
+                                                <button
+                                                    onClick={() => {
+                                                        setAssigningDoctor(item);
+                                                        setSelectedAssistantId('');
+                                                    }}
+                                                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-400 border border-slate-700 rounded-xl transition"
+                                                    title="Vincular Auxiliar / Enfermeiro do dia"
+                                                >
+                                                    <UserPlus2 className="w-4 h-4" />
+                                                </button>
+                                            )}
+
+                                            <button
+                                                onClick={() => setEditingCollaborator(item)}
+                                                className="text-xs font-bold text-indigo-400 hover:text-indigo-300 bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/40 px-3 py-1.5 rounded-xl transition"
+                                            >
+                                                Editar
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
-
-                {/* ABA 3: HISTÓRICO COMPLETO DE PACIENTES */}
-                {activeTab === 'pacientes' && (
-                    <div className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-                        <div className="flex justify-between items-center flex-wrap gap-4">
-                            <div>
-                                <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                                    <Users className="w-5 h-5 text-indigo-600" /> Registro Geral de Pacientes
-                                </h2>
-                                <p className="text-xs text-slate-400">Histórico de pacientes que deram entrada no atendimento</p>
-                            </div>
-
-                            <div className="relative w-full sm:w-72">
-                                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                                <input
-                                    type="text"
-                                    value={searchPatient}
-                                    onChange={(e) => setSearchPatient(e.target.value)}
-                                    placeholder="Buscar por nome, CPF ou senha..."
-                                    className="w-full pl-9 pr-3 py-2 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-600"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs border-collapse">
-                                <thead>
-                                    <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                                        <th className="py-3 px-3">Senha</th>
-                                        <th className="py-3 px-3">Nome Paciente</th>
-                                        <th className="py-3 px-3">CPF</th>
-                                        <th className="py-3 px-3">Data Nasc.</th>
-                                        <th className="py-3 px-3">Pressão / PA</th>
-                                        <th className="py-3 px-3">Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {filteredPatients.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={6} className="py-6 text-center text-slate-400">Nenhum paciente cadastrado.</td>
-                                        </tr>
-                                    ) : (
-                                        filteredPatients.map((p) => (
-                                            <tr key={p.id} className="hover:bg-slate-50 transition">
-                                                <td className="py-3 px-3 font-bold text-indigo-600">{p.ticket_number || '---'}</td>
-                                                <td className="py-3 px-3 font-bold text-slate-800">{p.name}</td>
-                                                <td className="py-3 px-3 text-slate-500">{p.cpf || '---'}</td>
-                                                <td className="py-3 px-3 text-slate-500">{p.birth_date || '---'}</td>
-                                                <td className="py-3 px-3 font-semibold text-slate-700">{p.blood_pressure || 'Pendente'}</td>
-                                                <td className="py-3 px-3">
-                                                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                                        p.status === 'aguardando_triagem'
-                                                            ? 'bg-amber-100 text-amber-700'
-                                                            : p.status === 'aguardando_atendimento_medico' || p.status === 'aguardando_atendimento'
-                                                                ? 'bg-blue-100 text-blue-700'
-                                                                : p.status === 'em_atendimento'
-                                                                    ? 'bg-indigo-100 text-indigo-700'
-                                                                    : 'bg-emerald-100 text-emerald-700'
-                                                    }`}>
-                                                        {(p.status || '').replace(/_/g, ' ')}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                )}
-
             </main>
 
-            {/* Modal de Criação de Colaborador */}
-            <NovoColaboradorModal
-                isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
-                onSuccess={fetchData}
-            />
+            {/* MODAL PARA VINCULAR AUXILIAR / ENFERMEIRO DE APOIO */}
+            {assigningDoctor && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h3 className="text-base font-bold text-white">Vincular Equipe de Apoio</h3>
+                                <p className="text-xs text-slate-400">
+                                    Defina o enfermeiro ou auxiliar responsável para {assigningDoctor.name}
+                                </p>
+                            </div>
+                            <button 
+                                onClick={() => setAssigningDoctor(null)}
+                                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
 
-            {/* Modal de Edição de Colaborador */}
-            <EditarColaboradorModal
-                isOpen={isEditModalOpen}
-                collaborator={selectedCollaborator}
-                onClose={() => {
-                    setIsEditModalOpen(false);
-                    setSelectedCollaborator(null);
-                }}
-                onSuccess={fetchData}
-            />
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                                Selecionar Auxiliar / Enfermeiro do Dia
+                            </label>
+                            <select
+                                value={selectedAssistantId}
+                                onChange={(e) => setSelectedAssistantId(e.target.value)}
+                                className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-3 py-2.5 text-xs outline-none focus:border-indigo-500"
+                            >
+                                <option value="">Sem auxiliar atribuído</option>
+                                {availableAssistants.map((assistant) => (
+                                    <option key={assistant.id} value={assistant.id}>
+                                        {assistant.name} ({formatRoleLabel(assistant.role)})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                            <button
+                                onClick={() => setAssigningDoctor(null)}
+                                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleSaveAssignment}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 transition"
+                            >
+                                Salvar Vínculo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modais de Cadastro e Edição */}
+            {isAddModalOpen && (
+                <NovoColaboradorModal 
+                    isOpen={isAddModalOpen} 
+                    onClose={() => setIsAddModalOpen(false)} 
+                    onSuccess={loadCollaborators} 
+                />
+            )}
+
+            {editingCollaborator && (
+                <EditarColaboradorModal 
+                    isOpen={!!editingCollaborator}
+                    collaborator={editingCollaborator} 
+                    onClose={() => setEditingCollaborator(null)} 
+                    onSuccess={loadCollaborators} 
+                />
+            )}
         </div>
     );
 };
+
+export default DashboardGerente;

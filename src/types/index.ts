@@ -1,4 +1,6 @@
-export type UserRole = 
+import { User } from '@supabase/supabase-js';
+
+export type UserRole =
     | 'gerente_geral'
     | 'gerente_plantao'
     | 'gerente'
@@ -16,16 +18,16 @@ export type UserRole =
     | 'medico'
     | 'medico_uti';
 
-export type RiskLevel = 
-    | 'vermelho' 
-    | 'laranja' 
-    | 'amarelo' 
-    | 'verde' 
-    | 'azul' 
-    | 'emergencia' 
-    | 'muito_urgente' 
-    | 'urgente' 
-    | 'pouco_urgente' 
+export type RiskLevel =
+    | 'vermelho'
+    | 'laranja'
+    | 'amarelo'
+    | 'verde'
+    | 'azul'
+    | 'emergencia'
+    | 'muito_urgente'
+    | 'urgente'
+    | 'pouco_urgente'
     | 'nao_urgente';
 
 export interface Profile {
@@ -81,5 +83,16 @@ export interface Patient {
     temperature?: string | number | null;
     oxygen_saturation?: string | number | null;
     vital_signs?: Record<string, unknown> | null;
+    triaged_at?: string | null;
+    triaged_by?: string | null;
+    updated_at?: string | null;
     created_at?: string;
+}
+
+export interface AuthContextType {
+    user: User | null;
+    profile: Profile | null;
+    loading: boolean;
+    signIn?: (email: string, password: string) => Promise<Profile | null>;
+    signOut: () => Promise<void>;
 }
