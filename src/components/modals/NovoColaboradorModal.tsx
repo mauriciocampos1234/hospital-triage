@@ -30,6 +30,7 @@ export const NovoColaboradorModal: React.FC<Props> = ({ isOpen, onClose, onSucce
     const [prefix, setPrefix] = useState<'Dr.' | 'Dra.' | ''>('Dr.');
     const [crm, setCrm] = useState('');
     const [coren, setCoren] = useState('');
+    const [crf, setCrf] = useState('');
     const [registrationNumber, setRegistrationNumber] = useState('');
     const [documentNumber, setDocumentNumber] = useState('');
 
@@ -41,6 +42,7 @@ export const NovoColaboradorModal: React.FC<Props> = ({ isOpen, onClose, onSucce
     const isDoctor = role === 'medico' || role === 'medico_uti';
     const isNurse = role === 'enfermeira_triagem' || role === 'enfermeira_medicamento' || role === 'enfermeira_uti';
     const isAuxiliary = role === 'auxiliar_enfermagem' || role === 'auxiliar_uti';
+    const isPharmacist = role === 'farmacia';
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -66,9 +68,10 @@ export const NovoColaboradorModal: React.FC<Props> = ({ isOpen, onClose, onSucce
                 prefix: isDoctor ? prefix : null,
                 crm: isDoctor ? crm : null,
                 coren: isNurse || isAuxiliary ? coren : null,
-                registration_number: !isDoctor && !isNurse && !isAuxiliary ? registrationNumber : null,
+                crf: isPharmacist ? crf : null,
+                registration_number: !isDoctor && !isNurse && !isAuxiliary && !isPharmacist ? registrationNumber : null,
                 document_number: documentNumber || null,
-                is_health_professional: isDoctor || isNurse || isAuxiliary
+                is_health_professional: isDoctor || isNurse || isAuxiliary || isPharmacist
             };
 
             const { error: profileError } = await supabase
@@ -262,8 +265,25 @@ export const NovoColaboradorModal: React.FC<Props> = ({ isOpen, onClose, onSucce
                         </div>
                     )}
 
+                    {/* Registro CRF / CFF para Farmacêuticos */}
+                    {isPharmacist && (
+                        <div className="p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-2">
+                            <label className="block font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">
+                                <BadgeCheck className="w-3.5 h-3.5 text-emerald-600" /> Registro CRF / CFF *
+                            </label>
+                            <input
+                                type="text"
+                                required
+                                placeholder="Ex: CRF-SP 12345"
+                                value={crf}
+                                onChange={(e) => setCrf(e.target.value)}
+                                className="w-full px-3 py-2 border rounded-xl outline-none focus:ring-2 focus:ring-emerald-600 bg-white"
+                            />
+                        </div>
+                    )}
+
                     {/* Identificação para recepção e administrativo */}
-                    {!isDoctor && !isNurse && !isAuxiliary && (
+                    {!isDoctor && !isNurse && !isAuxiliary && !isPharmacist && (
                         <div className="space-y-2 pt-1 border-t border-slate-100">
                             <div>
                                 <label className="block font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">

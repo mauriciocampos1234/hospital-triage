@@ -16,7 +16,8 @@ export const Login: React.FC = () => {
     // Redireciona automaticamente se o usuário já estiver logado
     useEffect(() => {
         if (!loading && user && profile) {
-            switch (profile.role) {
+            const role = (profile.role as string) || '';
+            switch (role) {
                 case 'gerente_geral':
                 case 'gerente_plantao':
                 case 'gerente':
@@ -27,7 +28,13 @@ export const Login: React.FC = () => {
                     navigate('/recepcao', { replace: true });
                     break;
                 case 'medico':
+                case 'medico_uti':
                     navigate('/medico', { replace: true });
+                    break;
+                case 'triagem':
+                case 'enfermeiro':
+                case 'enfermagem':
+                    navigate('/triagem', { replace: true });
                     break;
                 default:
                     break;
@@ -46,44 +53,46 @@ export const Login: React.FC = () => {
                 password,
             });
 
-            if (error) {
-                throw new Error(
-                    error.message === 'Invalid login credentials'
-                        ? 'E-mail ou senha incorretos.'
-                        : error.message
-                );
+            if (error) throw error;
+
+            // Busca o perfil do usuário logado no Supabase
+            const { data: userProfile, error: profileError } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', data.user.id)
+                .single();
+
+            console.log('Perfil encontrado no banco:', userProfile);
+
+            if (profileError || !userProfile) {
+                const msg = `Usuário autenticado, mas o perfil não foi encontrado na tabela 'profiles'. ${profileError?.message || ''}`;
+                setErrorMsg(msg);
+                alert(msg);
+                return;
             }
 
-            if (data.user) {
-                // Busca o perfil para determinar a rota de destino imediata
-                const { data: profileData } = await supabase
-                    .from('profiles')
-                    .select('role')
-                    .eq('id', data.user.id)
-                    .single();
+            const role = (userProfile.role as string) || '';
+            alert(`Login efetuado com sucesso! Role encontrada: "${role}"`);
 
-                if (profileData) {
-                    switch (profileData.role) {
-                        case 'gerente_geral':
-                        case 'gerente_plantao':
-                        case 'gerente':
-                            navigate('/gerencia', { replace: true });
-                            break;
-                        case 'recepcao':
-                        case 'recepcionista':
-                            navigate('/recepcao', { replace: true });
-                            break;
-                        case 'medico':
-                            navigate('/medico', { replace: true });
-                            break;
-                        default:
-                            navigate('/', { replace: true });
-                    }
-                }
+            // Redirecionamento condicional de acordo com a role do usuário
+            if (role === 'triagem' || role === 'enfermeiro' || role === 'enfermagem') {
+                navigate('/triagem');
+            } else if (role === 'recepcao' || role === 'recepcionista') {
+                navigate('/recepcao');
+            } else if (role === 'medico' || role === 'medico_uti') {
+                navigate('/medico');
+            } else if (role.includes('gerente')) {
+                navigate('/gerencia');
+            } else {
+                const msg = `Atenção: A role "${role}" não possui rota autorizada.`;
+                setErrorMsg(msg);
+                alert(msg);
             }
-        } catch (err) {
-            const errObj = err as Error;
-            setErrorMsg(errObj.message || 'Falha ao autenticar.');
+
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Erro ao realizar login.';
+            setErrorMsg(errorMessage);
+            alert('Erro ao fazer login: ' + errorMessage);
         } finally {
             setSubmitting(false);
         }

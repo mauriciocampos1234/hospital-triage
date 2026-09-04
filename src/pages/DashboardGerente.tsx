@@ -72,7 +72,6 @@ export const DashboardGerente: React.FC = () => {
     }, [fetchData]);
 
     // Função para Deletar Colaborador (DELETE)
-    // Função para Deletar Colaborador (DELETE)
     const handleDeleteCollaborator = async (id: string, name: string) => {
         if (!window.confirm(`Tem certeza de que deseja remover o colaborador "${name}"?`)) {
             return;
@@ -382,11 +381,13 @@ export const DashboardGerente: React.FC = () => {
                                                         ? `CRM: ${c.crm}` 
                                                         : c.coren 
                                                             ? `COREN: ${c.coren}` 
-                                                            : c.registration_number 
-                                                                ? `Matrícula: ${c.registration_number}` 
-                                                                : c.document_number 
-                                                                    ? `Doc: ${c.document_number}` 
-                                                                    : 'N/A'}
+                                                            : c.crf 
+                                                                ? `CRF: ${c.crf}` 
+                                                                : c.registration_number 
+                                                                    ? `Matrícula: ${c.registration_number}` 
+                                                                    : c.document_number 
+                                                                        ? `Doc: ${c.document_number}` 
+                                                                        : 'N/A'}
                                                 </td>
                                                 <td className="py-3 px-3 text-slate-400">
                                                     {c.created_at ? new Date(c.created_at).toLocaleDateString('pt-BR') : '---'}

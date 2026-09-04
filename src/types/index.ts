@@ -1,53 +1,85 @@
-export type UserRole =
+export type UserRole = 
+    | 'gerente_geral'
+    | 'gerente_plantao'
+    | 'gerente'
     | 'recepcao'
+    | 'recepcionista'
+    | 'triagem'
+    | 'enfermeiro'
+    | 'enfermagem'
     | 'enfermeira_triagem'
     | 'enfermeira_medicamento'
     | 'enfermeira_uti'
     | 'auxiliar_enfermagem'
     | 'auxiliar_uti'
-    | 'medico'
-    | 'medico_uti'
     | 'farmacia'
-    | 'gerente'
-    | 'gerente_plantao'
-    | 'gerente_geral';
+    | 'medico'
+    | 'medico_uti';
+
+export type RiskLevel = 
+    | 'vermelho' 
+    | 'laranja' 
+    | 'amarelo' 
+    | 'verde' 
+    | 'azul' 
+    | 'emergencia' 
+    | 'muito_urgente' 
+    | 'urgente' 
+    | 'pouco_urgente' 
+    | 'nao_urgente';
 
 export interface Profile {
     id: string;
     name: string;
     role: UserRole;
-    specialty?: string | null; // ex: 'Clínico Geral', 'Ortopedia', 'Radiologia', 'Pediatria', 'Intensivista / UTI'
-    prefix?: 'Dr.' | 'Dra.' | '' | null;
+    prefix?: '' | 'Dr.' | 'Dra.' | string | null;
+    specialty?: string | null;
     crm?: string | null;
     coren?: string | null;
+    crf?: string | null;
     registration_number?: string | null;
     document_number?: string | null;
-    is_health_professional?: boolean;
+    is_health_professional?: boolean | null;
     created_at?: string;
 }
 
-export type PatientStatus =
-    | 'aguardando_triagem'
-    | 'em_triagem'
-    | 'aguardando_atendimento'
-    | 'aguardando_atendimento_medico'
-    | 'em_atendimento'
-    | 'finalizado'
-    | 'cancelado';
-
 export interface Patient {
     id: string;
-    ticket_number: string;
     name: string;
-    cpf?: string | null;
-    birth_date?: string | null;
-    gender?: string | null;
+    cpf: string;
+    rg?: string | null;
+    sus_card?: string | null;
+    birth_date: string;
     phone?: string | null;
+    has_whatsapp?: boolean;
+    whatsapp?: string | null;
+    is_own_phone?: boolean;
+    contact_name?: string | null;
+    contact_relationship?: string | null;
+    street_type?: string | null;
+    address_street?: string | null;
+    address_number?: string | null;
+    address_neighborhood?: string | null;
+    address_complement?: string | null;
+    address_city?: string | null;
+    address_state?: string | null;
+    address_cep?: string | null;
     is_priority?: boolean;
-    risk_level?: 'vermelho' | 'laranja' | 'amarelo' | 'verde' | 'azul' | string | null;
-    status: PatientStatus;
-    blood_pressure?: string | null;
+    is_return?: boolean;
+    doctor_id?: string | null;
+    doctor_name?: string | null;
     doctor_room?: string | null;
+    ticket_number?: string | null;
+    specialty?: string | null;
+    scheduled_date?: string | null;
+    scheduled_time?: string | null;
+    status?: string;
+    risk_level?: RiskLevel | string | null;
+    symptoms?: string | null;
+    blood_pressure?: string | null;
+    heart_rate?: string | number | null;
+    temperature?: string | number | null;
+    oxygen_saturation?: string | number | null;
+    vital_signs?: Record<string, unknown> | null;
     created_at?: string;
-    updated_at?: string;
 }

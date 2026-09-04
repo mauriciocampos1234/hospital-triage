@@ -13,7 +13,7 @@ interface Props {
 export const EditarColaboradorModal: React.FC<Props> = ({ isOpen, collaborator, onClose, onSuccess }) => {
     const [name, setName] = useState('');
     const [role, setRole] = useState<UserRole>('recepcao');
-    const [prefix, setPrefix] = useState<'Dr.' | 'Dra.' | ''>('');
+    const [prefix, setPrefix] = useState<string>('');
     const [crm, setCrm] = useState('');
     const [coren, setCoren] = useState('');
     const [registrationNumber, setRegistrationNumber] = useState('');
